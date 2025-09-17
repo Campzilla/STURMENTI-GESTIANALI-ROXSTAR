@@ -1,0 +1,23 @@
+Grab the code
+Change #your-element-selector to your element and include files from CDN
+Or view instructions for Strikingly.com
+
+
+<script src="p5.min.js"></script>
+<script src="vanta.trunk.min.js"></script>
+<script>
+VANTA.TRUNK({
+  el: "#your-element-selector",
+  mouseControls: true,
+  touchControls: true,
+  gyroControls: false,
+  minHeight: 200.00,
+  minWidth: 200.00,
+  scale: 1.00,
+  scaleMobile: 1.00,
+  color: 0x9f17,
+  backgroundColor: 0x0,
+  spacing: 6.50,
+  chaos: 7.50
+})
+</script>

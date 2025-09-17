@@ -1,0 +1,1 @@
+https://reactbits.dev/animations/splash-cursor

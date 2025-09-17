@@ -1,0 +1,12 @@
+{
+  "appName": "STURMENTI E RIZOZZE GESTIANALI ROXSTAR",
+  "whitelistSource": "remote",
+  "supabase": {
+    "url": "${SUPABASE_URL}",
+    "anonKey": "${SUPABASE_ANON_KEY}"
+  },
+  "realtime": {
+    "notesChannel": "notes",
+    "checklistChannel": "checklist"
+  }
+}

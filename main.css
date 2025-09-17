@@ -1,0 +1,185 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@700;800&display=swap');
+
+/* main.css - stile base e palette */
+:root {
+  --verde-prato: #2dbf3a;
+  --rosso-colonna: #e53935;
+  --viola-colonna: #7e57c2;
+  --giallo: #ffd600;
+  --azzurro-colonna: #29b6f6; /* nuovo */
+  --nero: #000000;
+  --bianco: #ffffff;
+  --accent: var(--verde-prato);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: #0b0b0b; color: var(--bianco); }
+
+#app-root { min-height: auto; }
+
+header.marquee {
+  overflow: hidden;
+  white-space: nowrap;
+  background: transparent; /* nessuna banda scura sopra */
+  border-bottom: none;
+  position: relative; /* per ::after */
+}
+header.marquee .track {
+  display: inline-block;
+  padding: 10px 0;
+  animation: marquee 15s linear infinite;
+  color: var(--giallo);
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-shadow: 0 0 10px rgba(255,214,0,0.35);
+  position: relative;
+  z-index: 1; /* testo sopra la striscia */
+}
+@keyframes marquee {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+main { padding: 16px; max-width: 1100px; margin: 0 auto; width: 100%; }
+
+/* Bottoni: leggera trasparenza + vetro */
+.button {
+  background: linear-gradient(180deg, rgba(45,191,58,0.85), rgba(45,191,58,0.75));
+  color: #0b0b0b;
+  border: 1px solid rgba(45,191,58,0.9);
+  padding: 10px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 800;
+  backdrop-filter: blur(2px);
+}
+.button:hover { filter: brightness(1.05); }
+.button:disabled { opacity: .6; cursor: not-allowed; }
+
+footer.glow {
+  position: static;
+  width: 100%;
+  text-align: center;
+  padding: 10px 0;
+  background: transparent; /* niente banda scura sotto */
+  border-top: none;
+}
+footer.glow .text {
+  font-weight: 800;
+  letter-spacing: 2px;
+  animation: glow 4s infinite;
+}
+@keyframes glow {
+  0% { color: #00ff66; text-shadow: 0 0 10px #00ff66; }
+  20% { color: #000; text-shadow: none; }
+  40% { color: #ffd600; text-shadow: 0 0 10px #ffd600; }
+  60% { color: #000; text-shadow: none; }
+  80% { color: #ff1a1a; text-shadow: 0 0 10px #ff1a1a; }
+  100% { color: #000; text-shadow: none; }
+}
+
+/* Forms: alleggeriti (niente black box) */
+input[type="text"], input[type="password"], textarea {
+  width: 100%;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.15);
+  color: var(--bianco);
+  backdrop-filter: blur(4px);
+}
+input[type="checkbox"] { accent-color: var(--verde-prato); }
+
+/* Notes */
+.notes { display: grid; grid-template-columns: 1fr; gap: 12px; }
+
+/* Utility */
+.hidden { display: none !important; }
+.card { background: transparent; border: none; padding: 0; }
+main > .card:first-child { margin-top: 12px; }
+
+/* Login background legacy disattivato (gestito da snippet) */
+body.login-bg { position: relative; background: #0b0b0b; }
+
+/* Modal styles */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 9999; }
+.modal { background: rgba(17,17,17,0.85); border-radius: 12px; padding: 16px; width: min(360px, 92vw); border: 1px solid #333; backdrop-filter: blur(2px); }
+.modal.warning { background: rgba(17,17,17,0.85); box-shadow: 0 0 0 3px #ffd60066, 0 0 30px #ffd60044; }
+.modal .modal-body { text-align: center; }
+.modal .modal-img { max-width: 200px; width: 100%; border-radius: 8px; margin-bottom: 12px; }
+.modal .modal-text { font-weight: 800; color: #000; background: #ffd600; padding: 8px; border-radius: 8px; margin-bottom: 12px; text-shadow: 0 0 8px #ffd600; }
+.modal .modal-close { width: 100%; }
+
+/* Lista fissa vecchia nascosta */
+.list-fixed { display: none; }
+
+/* Log floating action button */
+#log-fab { opacity: 0.75; padding: 8px 10px; font-size: 12px; }
+#log-fab:hover { opacity: 1; }
+
+/* Pulsante log a destra, rosso e più basso */
+#log-wrap { display: flex; justify-content: flex-end; margin: 16px 0; }
+#log-toggle-btn { background: var(--rosso-colonna); color: #fff; padding: 6px 10px; font-size: 12px; border-radius: 8px; border: none; }
+#log-toggle-btn:hover { filter: brightness(1.1); }
+
+/* Font per titoli (solo strumenti) */
+.tools-title {
+  font-family: 'Poppins', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: #000; /* richiesto: colore nero per i titoli */
+}
+
+/* Striscia semitrasparente sotto il banner scorrevole in login */
+header.marquee::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0; height: 40px;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    rgba(255,255,255,0.00) 0%,
+    rgba(255,255,255,0.14) 55%,
+    rgba(255,214,0,0.14) 100%
+  );
+  z-index: 0; /* sotto la traccia */
+}
+
+/* Riquadro leggero per il titolo nella pagina strumenti */
+.tools-header .tools-title {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.32);
+  backdrop-filter: blur(4px);
+}
+
+
+/* Chip per-elemento anche su label dei form (es. login + checkbox) */
+form label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.32);
+  border-radius: 12px;
+  backdrop-filter: blur(4px);
+}
+
+/* Campi form: +opacità */
+input[type="text"], input[type="password"], textarea {
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.26);
+}
+
+/* Titoli chip: +opacità */
+.tools-header .tools-title {
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.30);
+}
+
+/* Assicura che l'interfaccia sia sempre sopra agli sfondi (che stanno a z-index:0) */
+body > header, body > main, body > footer, #app-root {
+  position: relative;
+  z-index: 1;
+}

@@ -1,0 +1,28 @@
+/* docs.css - stili modulari per la sezione Documenti */
+
+#docs-list { list-style: none; padding-left: 0; margin: 8px 0 0; }
+#docs-list li {
+  cursor: pointer;
+  padding: 8px 10px;
+  margin: 6px 0;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.32);
+  border-radius: 12px;
+  backdrop-filter: blur(4px);
+  color: var(--giallo); /* Colore giallo per i titoli dei documenti */
+}
+#docs-list li:hover { filter: brightness(1.1); }
+
+/* Titolo Documenti */
+.docs-title {
+  display: inline-block;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.32);
+  backdrop-filter: blur(4px);
+  margin-bottom: 6px;
+}
+
+/* Documento fisso evidenziato */
+.document-item.fixed { font-weight: 700; color: var(--accent); }

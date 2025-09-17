@@ -1,0 +1,66 @@
+
+=== App - Titoli e intestazioni ===
+ROXSTAR RIZOZZE GESTIANALI  (login ) 
+STURMENTI E RIZOZZE GESTIANALI ROXSTAR (pagina strumenti)
+
+=== Marquee (scritta scorrevole nella pagina del login, con font bold pixel art style gialla) ===
+ATTENSCION............WARNING........... - ACCESSO AL SUB-COMANDO INTERNO ROCKSTAR PUB ENCORPOREITED ASSOSCIESCION ENTERPRAIS.............. WARNING! - DANGER! .............. ACCESSO CONSENTITO SOLO AI FINAL BOSS...........
+
+
+=== LISTA DAA SPESSA - (lista fissa non cancellabile. si possono aggiungere ingredienti e muoverli nelle colonne ma non si possono cancellare) ===
+Pane
+Piade
+Manzo
+Cinghiale
+Salsicce
+Pollo
+Wurstel
+Mozzarelle
+Cheddar
+Pecorino
+Fontina \ Scamorza
+Yogurt Greco
+Insalata
+Pomodori
+Rucola
+Cicoria
+Cipolle
+Peperoni
+Facioli
+Cieccì
+Mais
+Patate
+Patatine Fritte
+Mozzarelline
+Maionese
+Ketchup
+Salsa BBQ
+Korn-Flakes
+Farina
+Aceto
+Latte di Soia
+Cetriolini
+Capperi
+Burro
+Pasta
+Grana
+Carta Rotolo
+Carta Paglia
+Carta Bagno
+Sacchi Neri
+
+
+
+
+
+
+whitelist:
+
+user: fredde
+pass: aiuola
+
+user: zando
+pass: aiuola
+
+user: guest 
+pass: rostarre

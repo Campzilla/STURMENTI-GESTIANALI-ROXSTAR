@@ -1,0 +1,31 @@
+/* checklist.css - stili modulari per la Checklist */
+
+/* Layout checklist */
+.checklists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* Colonne checklist */
+.column { border-radius: 14px; padding: 14px; }
+.column.left  { background: rgba(229,57,53,0.48);  border: 2px solid rgba(229,57,53,0.70); }
+.column.right { background: rgba(126,87,194,0.48); border: 2px solid rgba(126,87,194,0.70); }
+
+/* Colori colonne per checklist personalizzate */
+.checklists.custom .column.left  { background: rgba(255,214,0,0.48);  border-color: rgba(255,214,0,0.70); }
+.checklists.custom .column.right { background: rgba(41,182,246,0.48); border-color: rgba(41,182,246,0.70); }
+.column h2 { margin: 0 0 8px; }
+
+/* Item checklist */
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  border-radius: 12px;
+  backdrop-filter: blur(4px);
+}
+
+/* Item tint in base alla colonna */
+.column.left .item  { background: rgba(229,57,53,0.48);  border: 1px solid rgba(229,57,53,0.48); }
+.column.right .item { background: rgba(126,87,194,0.48); border: 1px solid rgba(126,87,194,0.48); }
+.checklists.custom .column.left .item  { background: rgba(255,214,0,0.48);  border: 1px solid rgba(255,214,0,0.48); }
+.checklists.custom .column.right .item { background: rgba(41,182,246,0.48); border: 1px solid rgba(41,182,246,0.48); }
