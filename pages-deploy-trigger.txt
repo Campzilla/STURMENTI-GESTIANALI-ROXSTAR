@@ -1,0 +1,1 @@
+trigger: deploy after enabling GitHub Pages via Actions
