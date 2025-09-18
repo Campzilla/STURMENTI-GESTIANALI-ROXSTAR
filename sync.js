@@ -92,7 +92,12 @@ export async function upsert(table, values) {
     const isChecklist = /^checklist(_.+)?$/.test(table);
     const docId = isChecklist ? (table === 'checklist' ? 'fixed_list' : table.replace(/^checklist_/, '')) : null;
     const remoteTable = isChecklist ? 'checklist_items' : table;
-    const toRemote = isChecklist ? arr.map(r => ({ ...r, doc_id: docId })) : arr;
+    const toRemote = isChecklist
+      ? arr.map(r => {
+          const { fixed, ...rest } = (r || {});
+          return { ...rest, doc_id: docId };
+        })
+      : arr;
     if (!sb) {
       const data = upsertOffline(table, values);
       logEvent('sync', 'upsert_offline', { table, count: Array.isArray(values) ? values.length : 1 });

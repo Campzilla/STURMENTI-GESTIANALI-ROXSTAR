@@ -336,7 +336,7 @@ export function initChecklistUI(container, opts = {}) {
               text: r.text,
               checked: !!r.checked,
               column: r.column === RIGHT ? RIGHT : (r.column === LEFT ? LEFT : (r.column === 'right' ? RIGHT : LEFT)),
-              fixed: !!r.fixed
+              fixed: r.fixed === true || (r.id && /^fixed_/i.test(r.id))
             };
             byId.set(item.id, { ...byId.get(item.id), ...item });
           }
@@ -357,7 +357,7 @@ export function initChecklistUI(container, opts = {}) {
               text: newRow.text,
               checked: !!newRow.checked,
               column: newRow.column === RIGHT ? RIGHT : (newRow.column === LEFT ? LEFT : (newRow.column === 'right' ? RIGHT : LEFT)),
-              fixed: !!newRow.fixed
+              fixed: newRow.fixed === true || (newRow.id && /^fixed_/i.test(newRow.id))
             };
             byId.set(item.id, { ...byId.get(item.id), ...item });
           } else if ((evt === 'DELETE' || !newRow) && oldRow && oldRow.id) {
