@@ -40,11 +40,11 @@ $headers = @{ 'apikey'=$anonKey; 'Authorization'="Bearer $anonKey" }
 
 # Notes CRUD
 Write-Host "Upserting a test note..."
-$note = @{ id = "verify_note"; title="Verifica"; content="ok"; updated_at=(Get-Date).ToString("o") }
+$note = @{ id = "verify_note"; title="Verifica"; body="ok"; updated_at=(Get-Date).ToString("o") }
 Invoke-RestJson -Method POST -Url "$baseUrl/rest/v1/notes" -Headers ($headers + @{Prefer='resolution=merge-duplicates'}) -Body @($note) | Out-Null
 
 Write-Host "Selecting the test note..."
-$sel = Invoke-RestJson -Method GET -Url "$baseUrl/rest/v1/notes?id=eq.verify_note&select=id,title,content" -Headers $headers
+$sel = Invoke-RestJson -Method GET -Url "$baseUrl/rest/v1/notes?id=eq.verify_note&select=id,title,body" -Headers $headers
 if (-not $sel -or $sel.Count -eq 0) { throw "Note upsert/select failed" }
 
 Write-Host "Deleting the test note..."
