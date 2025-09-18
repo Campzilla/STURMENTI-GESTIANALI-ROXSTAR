@@ -37,6 +37,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y postgresql-client jq
 
+      - name: Test DB connectivity and column list (pre)
+        env:
+          PGPASSWORD: ${{ env.SUPABASE_DB_PASSWORD }}
+        run: |
+          echo "Connecting to $DB_URL"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select now(), current_user;"
+          psql "$DB_URL" -c "select column_name, data_type from information_schema.columns where table_schema='public' and table_name='checklist_items' order by ordinal_position;"
+
       - name: Apply schema, RLS policies and Realtime publication (idempotent)
         env:
           PGPASSWORD: ${{ env.SUPABASE_DB_PASSWORD }}
@@ -125,6 +133,14 @@ jobs:
           SQL
 
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f /tmp/init.sql
+
+      - name: Verify checklist_items schema (post)
+        env:
+          PGPASSWORD: ${{ env.SUPABASE_DB_PASSWORD }}
+        run: |
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select column_name, data_type from information_schema.columns where table_schema='public' and table_name='checklist_items' order by ordinal_position;"
+          psql "$DB_URL" -c "select count(*) from public.checklist_items;"
+          psql "$DB_URL" -c "do $$ begin perform pg_notify('pgrst', 'reload schema'); end $$;"
 
       - name: Extract Supabase URL and anon key from config.json
         id: cfg
