@@ -1,3 +1,4 @@
+# trigger: force run to align DB schema for documents/checklist_items and Realtime publication
 name: Supabase DB setup and verification
 
 on:
