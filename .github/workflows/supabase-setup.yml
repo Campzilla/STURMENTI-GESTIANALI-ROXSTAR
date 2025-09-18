@@ -1,0 +1,150 @@
+name: Supabase DB setup and verification
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - .github/workflows/supabase-setup.yml
+  workflow_dispatch:
+
+jobs:
+  setup-db:
+    name: Setup Supabase schema, RLS and Realtime
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required secrets and compute DB URL
+        run: |
+          if [ -z "$SUPABASE_PROJECT_REF" ] || [ -z "$SUPABASE_DB_PASSWORD" ]; then
+            echo "ERROR: Missing SUPABASE_PROJECT_REF or SUPABASE_DB_PASSWORD" >&2
+            exit 1
+          fi
+          echo "DB_URL=postgresql://postgres:${SUPABASE_DB_PASSWORD}@db.${SUPABASE_PROJECT_REF}.supabase.co:5432/postgres?sslmode=require" >> "$GITHUB_ENV"
+
+      - name: Install psql client and jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client jq
+
+      - name: Apply schema, RLS policies and Realtime publication (idempotent)
+        env:
+          PGPASSWORD: ${{ env.SUPABASE_DB_PASSWORD }}
+        run: |
+          cat > /tmp/init.sql <<'SQL'
+          -- Tables
+          create table if not exists public.documents (
+            id text primary key,
+            title text not null,
+            type text not null default 'note',
+            created_at timestamptz default now()
+          );
+
+          create table if not exists public.notes (
+            id text primary key,
+            title text,
+            body text,
+            updated_at timestamptz default now()
+          );
+
+          create table if not exists public.checklist_items (
+            id text primary key,
+            doc_id text not null,
+            text text not null,
+            checked boolean default false,
+            "column" text default 'left',
+            fixed boolean default false,
+            updated_at timestamptz default now()
+          );
+
+          -- Indexes
+          create index if not exists idx_documents_created_at on public.documents (created_at desc);
+          create index if not exists idx_notes_updated_at on public.notes (updated_at desc);
+          create index if not exists idx_checklist_doc on public.checklist_items (doc_id);
+          create index if not exists idx_checklist_updated_at on public.checklist_items (updated_at desc);
+
+          -- Enable RLS
+          alter table public.documents enable row level security;
+          alter table public.notes enable row level security;
+          alter table public.checklist_items enable row level security;
+
+          -- Permissive policies for anon (temporary, allow all)
+          do $$
+          begin
+            if not exists (select 1 from pg_policies where schemaname='public' and tablename='documents' and policyname='allow_all_documents') then
+              create policy "allow_all_documents" on public.documents for all using (true) with check (true);
+            end if;
+            if not exists (select 1 from pg_policies where schemaname='public' and tablename='notes' and policyname='allow_all_notes') then
+              create policy "allow_all_notes" on public.notes for all using (true) with check (true);
+            end if;
+            if not exists (select 1 from pg_policies where schemaname='public' and tablename='checklist_items' and policyname='allow_all_checklist') then
+              create policy "allow_all_checklist" on public.checklist_items for all using (true) with check (true);
+            end if;
+          end $$;
+
+          -- Add to Realtime publication if not already present
+          do $$
+          begin
+            if not exists (
+              select 1 from pg_publication_tables 
+              where pubname='supabase_realtime' and schemaname='public' and tablename='documents') then
+              alter publication supabase_realtime add table public.documents;
+            end if;
+            if not exists (
+              select 1 from pg_publication_tables 
+              where pubname='supabase_realtime' and schemaname='public' and tablename='notes') then
+              alter publication supabase_realtime add table public.notes;
+            end if;
+            if not exists (
+              select 1 from pg_publication_tables 
+              where pubname='supabase_realtime' and schemaname='public' and tablename='checklist_items') then
+              alter publication supabase_realtime add table public.checklist_items;
+            end if;
+          end $$;
+          SQL
+
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f /tmp/init.sql
+
+      - name: Extract Supabase URL and anon key from config.json
+        id: cfg
+        run: |
+          URL=$(jq -r '.supabase.url' config.json)
+          ANON=$(jq -r '.supabase.anonKey' config.json)
+          if [ -z "$URL" ] || [ -z "$ANON" ] || [ "$URL" = "null" ] || [ "$ANON" = "null" ]; then
+            echo "Config missing supabase url/anonKey" >&2
+            exit 1
+          fi
+          echo "SUPABASE_URL=$URL" >> $GITHUB_ENV
+          echo "SUPABASE_ANON_KEY=$ANON" >> $GITHUB_ENV
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Supabase client
+        run: npm install @supabase/supabase-js@2 --no-audit --no-fund --silent
+
+      - name: Verify anon client can upsert/select/delete
+        env:
+          SUPABASE_URL: ${{ env.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ env.SUPABASE_ANON_KEY }}
+        run: |
+          node - <<'NODE'
+          import { createClient } from '@supabase/supabase-js';
+          const url = process.env.SUPABASE_URL;
+          const anon = process.env.SUPABASE_ANON_KEY;
+          const sb = createClient(url, anon, { auth: { persistSession: false } });
+          const id = 'actions_probe_' + Math.random().toString(36).slice(2);
+          const up = await sb.from('notes').upsert({ id, title: 'probe', body: 'ok' }).select();
+          if (up.error) { console.error('Upsert error:', up.error); process.exit(1); }
+          const sel = await sb.from('notes').select('*').eq('id', id).maybeSingle();
+          if (sel.error || !sel.data) { console.error('Select error:', sel.error); process.exit(1); }
+          const del = await sb.from('notes').delete().eq('id', id);
+          if (del.error) { console.error('Delete error:', del.error); process.exit(1); }
+          console.log('Anon verification OK');
+          NODE
