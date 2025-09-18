@@ -24,7 +24,7 @@ export async function getConfig() {
 
 // Lazy import del client Supabase solo quando necessario
 let supabaseClient = null;
-let supabaseDisabled = false; // circuit breaker: se c'è un errore, disattiva ulteriori tentativi
+let supabaseDisabled = false; // circuit breaker: mantenuto ma non viene più attivato nei fallback
 function isPlaceholder(v) {
   return typeof v === 'string' && /^\s*\$\{[A-Za-z0-9_]+\}\s*$/.test(v);
 }
@@ -33,7 +33,7 @@ function looksLikeJwt(s) {
 }
 function hasValidSupabaseConfig(cfg) {
   const url = cfg?.supabase?.url?.trim();
-  const key = cfg?.supabase?.anonKey?.trim();
+  const key = (cfg?.supabase?.anonKey?.trim?.() || cfg?.supabase?.anon_key?.trim?.());
   if (!url || !key) return false;
   const badToken = /YOUR_|REPLACE|CHANGEME|EXAMPLE/i;
   if (isPlaceholder(url) || isPlaceholder(key)) return false;
@@ -44,16 +44,28 @@ function hasValidSupabaseConfig(cfg) {
   return true;
 }
 export async function getSupabase() {
-  if (supabaseDisabled) return null; // già disattivato per errori precedenti
+  // Niente short-circuit: proviamo a creare il client ad ogni chiamata finché non riusciamo
   if (supabaseClient) return supabaseClient;
   const cfg = await getConfig();
-  // Abilita Supabase SOLO se esplicitamente richiesto da config
-  const realtimeEnabled = cfg?.realtime?.enabled === true;
+  // Abilita Supabase di default, salvo esplicito realtime.enabled === false
+  const realtimeEnabled = cfg?.realtime?.enabled !== false;
   if (!realtimeEnabled || !hasValidSupabaseConfig(cfg)) {
-    return null; // modalità offline di default
+    return null; // modalità offline se non configurato o esplicitamente disattivato
   }
-  const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
-  supabaseClient = createClient(cfg.supabase.url, cfg.supabase.anonKey, { auth: { persistSession: false } });
+  // Import robusto con più CDN compatibili con mobile
+  let createClient;
+  try {
+    ({ createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'));
+  } catch {
+    try {
+      ({ createClient } = await import('https://esm.sh/@supabase/supabase-js@2'));
+    } catch {
+      ({ createClient } = await import('https://unpkg.com/@supabase/supabase-js@2.47.10/+esm'));
+    }
+  }
+  const url = cfg.supabase.url;
+  const key = cfg.supabase.anonKey || cfg.supabase.anon_key;
+  supabaseClient = createClient(url, key, { auth: { persistSession: false } });
   return supabaseClient;
 }
 
@@ -107,8 +119,7 @@ export async function upsert(table, values) {
     if (error) throw error;
     return { data, error: null };
   } catch (e) {
-    // Degrada in offline senza segnalare errore bloccante
-    supabaseDisabled = true; // disattiva ulteriori tentativi in questa sessione
+    // Degrada in offline senza disattivare definitivamente Supabase
     const data = upsertOffline(table, values);
     logEvent('sync', 'upsert_offline_fallback', { table, reason: e?.message });
     return { data, error: null };
@@ -158,7 +169,6 @@ export async function list(table, match = null) {
     if (error) throw error;
     return data || [];
   } catch (e) {
-    supabaseDisabled = true;
     logEvent('sync', 'list_offline_fallback', { table, reason: e?.message });
     return readOffline(table);
   }
@@ -176,11 +186,10 @@ export async function getById(table, id) {
     }
     let query = sb.from(remoteTable).select('*').eq('id', id);
     if (isChecklist) query = query.eq('doc_id', docId);
-    const { data, error } = await query.maybeSingle?.() ?? query.single();
+    const { data, error } = await (query.maybeSingle?.() ?? query.single());
     if (error) throw error;
     return data || null;
   } catch (e) {
-    supabaseDisabled = true;
     logEvent('sync', 'getById_offline_fallback', { table, reason: e?.message, id });
     const rows = readOffline(table);
     return rows.find(r => r.id === id) || null;
@@ -202,7 +211,6 @@ export async function subscribe(table, callback) {
     ch.subscribe();
     return () => sb.removeChannel(ch);
   } catch (e) {
-    supabaseDisabled = true;
     logEvent('sync', 'subscribe_offline_fallback', { table, reason: e?.message });
     return () => {};
   }

@@ -35,7 +35,7 @@ $configPath = Join-Path $PSScriptRoot '..' | Join-Path -ChildPath 'config.json'
 if (-not (Test-Path $configPath)) { throw "config.json not found at $configPath" }
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 $baseUrl = $config.supabase.url.TrimEnd('/')
-$anonKey = $config.supabase.anon_key
+$anonKey = $config.supabase.anonKey
 $headers = @{ 'apikey'=$anonKey; 'Authorization'="Bearer $anonKey" }
 
 # Notes CRUD

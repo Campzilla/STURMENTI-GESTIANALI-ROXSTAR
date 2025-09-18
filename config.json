@@ -6,6 +6,7 @@
     "anonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhiemtzYW1uY3d4a3h0eHlyZmViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgxMTI4NTAsImV4cCI6MjA3MzY4ODg1MH0.XpRK34NOa9R4txqVFipJXaLzlzFJf4DMLHMBnv-bxzI"
   },
   "realtime": {
+    "enabled": true,
     "notesChannel": "notes",
     "checklistChannel": "checklist"
   }
