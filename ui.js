@@ -336,6 +336,15 @@ export function render() {
     main.appendChild(toolsPage());
     // dopo aver montato la pagina strumenti aggiorno il pannello documenti
     setTimeout(refreshDocsList, 0);
+    // auto self-test solo una volta per sessione
+    setTimeout(() => {
+      try {
+        if (!localStorage.getItem('roxstar_selftest_done')) {
+          if (typeof runSyncSelfTest === 'function') runSyncSelfTest();
+          localStorage.setItem('roxstar_selftest_done', '1');
+        }
+      } catch {}
+    }, 400);
   } else {
     main.appendChild(loginPage());
   }
