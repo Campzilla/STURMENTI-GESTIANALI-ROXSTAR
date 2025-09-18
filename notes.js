@@ -3,8 +3,8 @@
  * Editor Note con titolo, area testo e pulsanti Salva, Elimina, Rinomina.
  */
 import { logEvent } from './logger.js';
-import { upsert, remove } from './sync.js?v=rox11';
-import { getById, subscribe as subscribeSync } from './sync.js?v=rox11';
+import { upsert, remove } from './sync.js?v=rox12';
+import { getById, subscribe as subscribeSync } from './sync.js?v=rox12';
 
 let currentId = null;
 let unsubscribeNotes = null;

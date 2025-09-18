@@ -4,7 +4,7 @@
  * La whitelist non è in chiaro nel repo: verrà fornita via Secrets/Actions e caricata come config runtime.
  */
 import { logEvent, logError } from './logger.js?v=rox11';
-import { getConfig } from './sync.js?v=rox11';
+import { getConfig } from './sync.js?v=rox12';
 
 const AUTH_KEY = 'roxstar_auth_user';
 let cachedWhitelist = null;

@@ -3,8 +3,8 @@
  * Gestione UI e dati per la checklist in due colonne con regole richieste.
  */
 import { logEvent, logError } from './logger.js?v=rox11';
-import { upsert, remove } from './sync.js?v=rox11';
-import { list as listSync, subscribe as subscribeSync } from './sync.js?v=rox11';
+import { upsert, remove } from './sync.js?v=rox12';
+import { list as listSync, subscribe as subscribeSync } from './sync.js?v=rox12';
 
 const LEFT = 'left';
 const RIGHT = 'right';
