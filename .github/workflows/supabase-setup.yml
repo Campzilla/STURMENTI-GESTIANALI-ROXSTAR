@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
       - name: Checkout
@@ -20,8 +21,13 @@ jobs:
 
       - name: Validate required secrets and compute DB URL
         run: |
+          # Fallback: se non è passato SUPABASE_PROJECT_REF ma abbiamo SUPABASE_PROJECT_ID, usiamo quello
+          if [ -z "$SUPABASE_PROJECT_REF" ] && [ -n "$SUPABASE_PROJECT_ID" ]; then
+            SUPABASE_PROJECT_REF="$SUPABASE_PROJECT_ID"
+          fi
+
           if [ -z "$SUPABASE_PROJECT_REF" ] || [ -z "$SUPABASE_DB_PASSWORD" ]; then
-            echo "ERROR: Missing SUPABASE_PROJECT_REF or SUPABASE_DB_PASSWORD" >&2
+            echo "ERROR: Missing SUPABASE_PROJECT_REF/ID or SUPABASE_DB_PASSWORD" >&2
             exit 1
           fi
           echo "DB_URL=postgresql://postgres:${SUPABASE_DB_PASSWORD}@db.${SUPABASE_PROJECT_REF}.supabase.co:5432/postgres?sslmode=require" >> "$GITHUB_ENV"
@@ -60,6 +66,14 @@ jobs:
             fixed boolean default false,
             updated_at timestamptz default now()
           );
+
+          -- Ensure required columns exist if table pre-existed with different shape
+          alter table public.checklist_items add column if not exists doc_id text;
+          alter table public.checklist_items add column if not exists text text;
+          alter table public.checklist_items add column if not exists checked boolean default false;
+          alter table public.checklist_items add column if not exists "column" text default 'left';
+          alter table public.checklist_items add column if not exists fixed boolean default false;
+          alter table public.checklist_items add column if not exists updated_at timestamptz default now();
 
           -- Indexes
           create index if not exists idx_documents_created_at on public.documents (created_at desc);
@@ -105,6 +119,9 @@ jobs:
               alter publication supabase_realtime add table public.checklist_items;
             end if;
           end $$;
+
+          -- Force PostgREST schema cache reload (in case of ALTER TABLE)
+          do $$ begin perform pg_notify('pgrst', 'reload schema'); end $$;
           SQL
 
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f /tmp/init.sql
