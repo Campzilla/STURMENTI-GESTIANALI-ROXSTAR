@@ -1,12 +1,12 @@
 // ui.js
 // Inizializza la UI, monta header, main (login o tools) e footer.
-import { initAuthUI, isAuthenticated, logout } from './auth.js?v=rox12';
-import { initChecklistUI } from './checklist.js?v=rox12';
-import * as Notes from './notes.js?v=rox12';
-import { initLoggerPanel, logEvent } from './logger.js?v=rox12';
-import { initBackgrounds } from './backgrounds.js?v=rox12';
-import { upsert as upsertMeta, remove as removeMeta, subscribe as subscribeMeta } from './sync.js?v=rox12';
-import { list as listMeta } from './sync.js?v=rox12';
+import { initAuthUI, isAuthenticated, logout } from './auth.js?v=rox13';
+import { initChecklistUI } from './checklist.js?v=rox13';
+import * as Notes from './notes.js?v=rox13';
+import { initLoggerPanel, logEvent } from './logger.js?v=rox13';
+import { initBackgrounds } from './backgrounds.js?v=rox13';
+import { upsert as upsertMeta, remove as removeMeta, subscribe as subscribeMeta } from './sync.js?v=rox13';
+import { list as listMeta } from './sync.js?v=rox13';
 
 // Util per id
 function uid() { return Math.random().toString(36).slice(2); }
@@ -37,6 +37,15 @@ const DOCS = new Map([[ 'fixed_list', { title: 'LISTA DAA SPESSA', type: 'checkl
   } catch {}
 })();
 
+// helper per pulire prefissi tecnici del compat layer
+function sanitizeTitle(raw) {
+  let t = String(raw || '');
+  // rimuove prefisso __DOC__: e prefisso checklist __CHK__:docId|
+  t = t.replace(/^__DOC__:/, '');
+  t = t.replace(/^__CHK__:[^|]*\|/, '');
+  return t;
+}
+
 // Sottoscrizione realtime ai cambiamenti della tabella documents (se Supabase è configurato)
 subscribeMeta('documents', (payload) => {
   try {
@@ -44,7 +53,13 @@ subscribeMeta('documents', (payload) => {
     const newRow = payload?.new;
     const oldRow = payload?.old;
     if (newRow && newRow.id) {
-      DOCS.set(newRow.id, { title: newRow.title, type: newRow.type || 'note' });
+      // Nota: l'evento arriva dalla tabella remota 'notes' e contiene i prefissi tecnici
+      const title = sanitizeTitle(newRow.title);
+      let type = newRow.type || 'note';
+      if (!newRow.type && newRow.body) {
+        try { type = JSON.parse(newRow.body || '{}')?.type || 'note'; } catch {}
+      }
+      DOCS.set(newRow.id, { title, type });
       refreshDocsList();
     } else if ((evt === 'DELETE' || !newRow) && oldRow?.id) {
       if (oldRow.id !== 'fixed_list') DOCS.delete(oldRow.id);
@@ -221,7 +236,7 @@ function selectDocument(id) {
 function toolsPage() {
   const container = el('div', { class: '' });
 
-  const toolbar = el('div', { style: 'display:flex; gap:8px; margin-bottom:12px;' }, [
+  const toolbar = el('div', { style: 'display:flex; gap:8px; align-items:center; margin-bottom:12px;' }, [
     el('button', { class: 'button', onclick: () => { logout(); render(); } }, 'Logout'),
     el('button', { class: 'button', onclick: () => {
       const id = 'cl_' + uid();
@@ -234,7 +249,11 @@ function toolsPage() {
       window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id, title: 'Nuova nota', type: 'note' } }));
       currentDoc = { type: 'note', id };
       render();
-    } }, 'Crea nota')
+    } }, 'Crea nota'),
+    // Pulsante self-test sincronizzazione
+    el('button', { id: 'btn-selftest', class: 'button muted', onclick: () => runSyncSelfTest() }, 'Self-test Sync'),
+    // Indicatore risultato self-test
+    el('span', { id: 'sync-selftest', style: 'margin-left:4px; font-size:12px; color:#aaa;' }, '—')
   ]);
 
   const layout = el('div', { style: 'display:grid; grid-template-columns: 1fr; gap:16px;' });
@@ -322,6 +341,9 @@ export function render() {
   }
 }
 
+// bootstrap iniziale
+render();
+
 // inserisco la chiamata al refresh dopo la creazione documenti
 // Trova i gestori di creazione e aggiorna la lista
 // Nota: mantenere lo stile esistente, qui aggiorniamo solo la lista visiva
@@ -335,3 +357,55 @@ window.addEventListener('DOMContentLoaded', () => {
   render();
 });
 window.addEventListener('storage', (e) => { if (e.key === 'roxstar_auth_user') render(); });
+
+// Self-test sincronizzazione: crea un documento di prova e verifica realtime/polling
+async function runSyncSelfTest() {
+  const indicator = document.getElementById('sync-selftest');
+  if (indicator) { indicator.textContent = 'Testing…'; indicator.style.color = '#aaa'; }
+  const testId = 'test_' + uid();
+  const table = `checklist_${testId}`;
+  const itemId = 't_' + uid();
+  try {
+    // 1) Pubblica meta documento
+    await upsertMeta('documents', { id: testId, title: 'Self Test Doc', type: 'checklist' });
+    // 2) Prepara listener realtime specifico per la checklist
+    let gotRealtime = false;
+    let gotPolling = false;
+    let unsub = null;
+    try {
+      unsub = await subscribeMeta(table, (payload) => {
+        try {
+          const newRow = payload?.new;
+          if (newRow && (newRow.id === itemId)) {
+            gotRealtime = true;
+          }
+        } catch {}
+      });
+    } catch {}
+    // 3) Upsert di un item che dovrebbe generare evento realtime
+    await upsertMeta(table, { id: itemId, text: 'ping', checked: false, column: 'left', fixed: false });
+    // 4) Attendi fino a 2.5s per realtime
+    await new Promise(r => setTimeout(r, 2500));
+    if (!gotRealtime) {
+      // 5) Fallback: polling per verificare la presenza dei dati entro 5s
+      try {
+        const rows = await listMeta(table);
+        if (Array.isArray(rows) && rows.find(x => x.id === itemId)) gotPolling = true;
+      } catch {}
+    }
+    // 6) Aggiorna UI
+    if (indicator) {
+      if (gotRealtime) { indicator.textContent = 'Self-test: realtime OK'; indicator.style.color = '#1db954'; }
+      else if (gotPolling) { indicator.textContent = 'Self-test: polling OK'; indicator.style.color = '#e6b800'; }
+      else { indicator.textContent = 'Self-test: FAIL'; indicator.style.color = '#e74c3c'; }
+    }
+    logEvent('selftest', 'sync_result', { realtime: gotRealtime, polling: gotPolling });
+    // 7) Cleanup soft (non bloccare in caso fallisca)
+    try { if (typeof unsub === 'function') unsub(); } catch {}
+    try { await removeMeta(table, { id: itemId }); } catch {}
+    try { await removeMeta('documents', { id: testId }); } catch {}
+  } catch (e) {
+    if (indicator) { indicator.textContent = 'Self-test: ERROR'; indicator.style.color = '#e74c3c'; }
+    logEvent('selftest', 'error', { message: e?.message });
+  }
+}

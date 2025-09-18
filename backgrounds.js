@@ -2,7 +2,7 @@
 /**
  * Caricamento snippet esterni dalla cartella ./backgrounds e attivazione/disattivazione.
  */
-import { logEvent } from './logger.js?v=rox11';
+import { logEvent } from './logger.js?v=rox13';
 
 let active = [];
 let lastInitToken = 0; // evita race tra chiamate ravvicinate
@@ -74,7 +74,7 @@ export function loadBackground(snippet){
     const s = document.createElement('script');
     s.type = 'module';
     s.defer = true;
-    s.src = `./backgrounds/${snippet}.js?v=rox11`;
+    s.src = `./backgrounds/${snippet}.js?v=rox13`;
     document.body.appendChild(s);
     logEvent('bg_load', 'append_script', { snippet });
   } catch (e) {

@@ -2,9 +2,9 @@
 /**
  * Gestione UI e dati per la checklist in due colonne con regole richieste.
  */
-import { logEvent, logError } from './logger.js?v=rox11';
-import { upsert, remove } from './sync.js?v=rox12';
-import { list as listSync, subscribe as subscribeSync } from './sync.js?v=rox12';
+import { logEvent, logError } from './logger.js?v=rox13';
+import { upsert, remove, getSupabase } from './sync.js?v=rox13';
+import { list as listSync, subscribe as subscribeSync } from './sync.js?v=rox13';
 
 const LEFT = 'left';
 const RIGHT = 'right';
@@ -163,11 +163,19 @@ function renderItem(item, table) {
 }
 
 function updateAll(table) {
+  // Normalizza eventuali item senza colonna assegnata (evita sparizioni)
+  state.items.forEach(i => { if (i.column !== LEFT && i.column !== RIGHT) i.column = LEFT; });
   const leftCol = document.getElementById('col-left');
   const rightCol = document.getElementById('col-right');
   if (leftCol && rightCol) {
     renderColumn(leftCol, LEFT, table);
     renderColumn(rightCol, RIGHT, table);
+    // Telemetria di rendering per diagnostica rapida
+    try {
+      const leftCount = state.items.filter(i => i.column === LEFT).length;
+      const rightCount = state.items.filter(i => i.column === RIGHT).length;
+      logEvent('checklist', 'render', { leftCount, rightCount });
+    } catch {}
   }
 }
 
@@ -273,6 +281,14 @@ export function initChecklistUI(container, opts = {}) {
   });
   actions.appendChild(deleteBtn);
 
+  // Indicatore stato sync (realtime/polling)
+  const rtIndicator = document.createElement('span');
+  rtIndicator.style.marginLeft = 'auto';
+  rtIndicator.style.fontSize = '12px';
+  rtIndicator.style.opacity = '0.8';
+  rtIndicator.textContent = 'Sync: …';
+  actions.appendChild(rtIndicator);
+
   // Per checklist custom aggiungo campi nome colonne
   let leftInput, rightInput;
   if (!isFixed) {
@@ -325,53 +341,70 @@ export function initChecklistUI(container, opts = {}) {
 
   // Carica da remoto (se disponibile) e sottoscrivi agli aggiornamenti
   (async () => {
-    try {
-      const rows = await listSync(table);
-      if (Array.isArray(rows) && rows.length) {
+    const applyRows = (rows) => {
+      try {
+        if (!Array.isArray(rows) || rows.length === 0) return;
         const byId = new Map(state.items.map(i => [i.id, i]));
         rows.forEach(r => {
           if (r && r.id) {
+            const prev = byId.get(r.id) || {};
+            const isFx = (r.fixed === true) || (prev.fixed === true) || (r.id && /^fixed_/i.test(r.id));
+            const col = (r.column === RIGHT ? RIGHT : (r.column === LEFT ? LEFT : (r.column === 'right' ? RIGHT : (prev.column === RIGHT ? RIGHT : LEFT))));
+            let text = (r.text !== undefined) ? r.text : prev.text;
+            if (isFx && (!text || !String(text).trim())) text = prev.text; // preserva testo ingredienti fissi
             const item = {
               id: r.id,
-              text: r.text,
-              checked: !!r.checked,
-              column: r.column === RIGHT ? RIGHT : (r.column === LEFT ? LEFT : (r.column === 'right' ? RIGHT : LEFT)),
-              fixed: r.fixed === true || (r.id && /^fixed_/i.test(r.id))
+              text,
+              checked: (r.checked !== undefined ? !!r.checked : !!prev.checked),
+              column: col,
+              fixed: isFx
             };
-            byId.set(item.id, { ...byId.get(item.id), ...item });
+            byId.set(item.id, item);
           }
         });
         state.items = Array.from(byId.values());
         updateAll(table);
-      }
+      } catch {}
+    };
+
+    try {
+      // Carica prima la lista fissa per avere testi corretti come base di merge
+      if (isFixed) { await ensureFixedList(); }
+      const rows = await listSync(table);
+      applyRows(rows);
     } catch {}
+
+    let sb = null;
+    try { sb = await getSupabase(); } catch {}
+
     try {
       const unsub = await subscribeSync(table, (payload) => {
         try {
           const evt = payload?.eventType || payload?.event;
           const newRow = payload?.new; const oldRow = payload?.old;
-          const byId = new Map(state.items.map(i => [i.id, i]));
           if (newRow && newRow.id) {
-            const item = {
-              id: newRow.id,
-              text: newRow.text,
-              checked: !!newRow.checked,
-              column: newRow.column === RIGHT ? RIGHT : (newRow.column === LEFT ? LEFT : (newRow.column === 'right' ? RIGHT : LEFT)),
-              fixed: newRow.fixed === true || (newRow.id && /^fixed_/i.test(newRow.id))
-            };
-            byId.set(item.id, { ...byId.get(item.id), ...item });
+            applyRows([newRow]);
           } else if ((evt === 'DELETE' || !newRow) && oldRow && oldRow.id) {
+            const byId = new Map(state.items.map(i => [i.id, i]));
             byId.delete(oldRow.id);
+            state.items = Array.from(byId.values());
+            updateAll(table);
           }
-          state.items = Array.from(byId.values());
-          updateAll(table);
         } catch {}
       });
       // opzionalmente memorizza unsub se servisse cancellare in futuro
       container.__unsubChecklist = unsub;
     } catch {}
-  })();
 
+    // Aggiorna indicatore e fallback a polling se necessario
+    rtIndicator.textContent = sb ? 'Sync: realtime + polling' : 'Sync: polling';
+    container.__pollChecklist = setInterval(async () => {
+      try {
+        const rows = await listSync(table);
+        applyRows(rows);
+      } catch {}
+    }, 5000);
+    })();
   input.querySelector('#add-item').addEventListener('click', () => {
     const text = input.querySelector('#new-item-text').value.trim();
     if (!text) return;
