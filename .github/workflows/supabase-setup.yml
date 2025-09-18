@@ -125,6 +125,13 @@ jobs:
             end if;
           end $$;
 
+          -- Explicit grants for anon/authenticated
+          grant usage on schema public to anon, authenticated;
+          grant select, insert, update, delete on all tables in schema public to anon, authenticated;
+          alter default privileges in schema public grant select, insert, update, delete on tables to anon, authenticated;
+          grant usage on all sequences in schema public to anon, authenticated;
+          alter default privileges in schema public grant usage on sequences to anon, authenticated;
+
           -- Add to Realtime publication if not already present
           do $$
           begin
@@ -145,7 +152,20 @@ jobs:
             end if;
           end $$;
 
-          -- Force PostgREST schema cache reload (in case of ALTER TABLE)
+          -- SECURITY DEFINER function to reload PostgREST via RPC
+          create or replace function public.pgrst_reload()
+          returns void
+          language plpgsql
+          security definer
+          as $$
+          begin
+            perform pg_notify('pgrst', 'reload schema');
+          end;
+          $$;
+          revoke all on function public.pgrst_reload() from public;
+          grant execute on function public.pgrst_reload() to anon, authenticated, service_role;
+
+          -- Force PostgREST schema cache reload (server-side)
           do $$ begin perform pg_notify('pgrst', 'reload schema'); end $$;
           SQL
 
@@ -170,6 +190,18 @@ jobs:
           fi
           echo "SUPABASE_URL=$URL" >> $GITHUB_ENV
           echo "SUPABASE_ANON_KEY=$ANON" >> $GITHUB_ENV
+
+      - name: Trigger PostgREST schema reload via RPC (anon)
+        env:
+          SUPABASE_URL: ${{ env.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ env.SUPABASE_ANON_KEY }}
+        run: |
+          curl -sS -X POST "$SUPABASE_URL/rest/v1/rpc/pgrst_reload" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+          sleep 2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
