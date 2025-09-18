@@ -95,21 +95,61 @@ function removeOffline(table, match){
   return filtered;
 }
 
+// ===== Compat layer: mappa documents/checklist su 'notes' =====
+const DOC_MARK = '__DOC__:'; // title prefisso per documents
+const CHK_MARK = '__CHK__:'; // title prefisso per checklist, seguito da `${docId}|`
+function isChecklistTable(t){ return /^checklist(_.+)?$/.test(t); }
+function docIdFromTable(t){ return t === 'checklist' ? 'fixed_list' : t.replace(/^checklist_/, ''); }
+function toRemoteRows(table, arr){
+  if (table === 'documents') {
+    return arr.map(r => ({ id: r.id, title: `${DOC_MARK}${r.title || ''}`, body: JSON.stringify({ type: r?.type || 'note' }) }));
+  }
+  if (isChecklistTable(table)) {
+    const dId = docIdFromTable(table);
+    return arr.map(r => {
+      const text = (r || {}).text || '';
+      const checked = !!(r || {}).checked;
+      const column = (r || {}).column || 'left';
+      const fixed = !!(r || {}).fixed;
+      return { id: r.id, title: `${CHK_MARK}${dId}|${text}`, body: JSON.stringify({ checked, column, fixed }) };
+    });
+  }
+  return arr;
+}
+function fromRemoteRows(table, rows){
+  if (table === 'documents') {
+    return rows.map(r => {
+      let type = 'note';
+      try { type = JSON.parse(r.body || '{}')?.type || 'note'; } catch {}
+      const title = (r.title || '').startsWith(DOC_MARK) ? r.title.slice(DOC_MARK.length) : (r.title || '');
+      return { id: r.id, title, type };
+    });
+  }
+  if (isChecklistTable(table)) {
+    const dId = docIdFromTable(table);
+    return rows
+      .filter(r => (r.title || '').startsWith(`${CHK_MARK}${dId}|`))
+      .map(r => {
+        const raw = r.title || '';
+        const sep = raw.indexOf('|');
+        const text = sep >= 0 ? raw.slice(sep + 1) : raw;
+        let meta = { checked: false, column: 'left', fixed: false };
+        try { meta = { ...meta, ...(JSON.parse(r.body || '{}') || {}) }; } catch {}
+        return { id: r.id, text, checked: !!meta.checked, column: meta.column || 'left', fixed: !!meta.fixed };
+      });
+  }
+  return rows;
+}
+
 // Helpers di base per tabella generica
 export async function upsert(table, values) {
   try {
     const sb = await getSupabase();
     const arr = Array.isArray(values) ? values : [values];
-    // mappatura tabella per Supabase
-    const isChecklist = /^checklist(_.+)?$/.test(table);
-    const docId = isChecklist ? (table === 'checklist' ? 'fixed_list' : table.replace(/^checklist_/, '')) : null;
-    const remoteTable = isChecklist ? 'checklist_items' : table;
-    const toRemote = isChecklist
-      ? arr.map(r => {
-          const { fixed, ...rest } = (r || {});
-          return { ...rest, doc_id: docId };
-        })
-      : arr;
+    const isChecklist = isChecklistTable(table);
+    const isDocuments = table === 'documents';
+    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
+    const toRemote = (isChecklist || isDocuments) ? toRemoteRows(table, arr) : arr;
     if (!sb) {
       const data = upsertOffline(table, values);
       logEvent('sync', 'upsert_offline', { table, count: Array.isArray(values) ? values.length : 1 });
@@ -117,7 +157,8 @@ export async function upsert(table, values) {
     }
     const { data, error } = await sb.from(remoteTable).upsert(toRemote).select();
     if (error) throw error;
-    return { data, error: null };
+    const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data || []) : (data || []);
+    return { data: mapped, error: null };
   } catch (e) {
     // Degrada in offline senza disattivare definitivamente Supabase
     const data = upsertOffline(table, values);
@@ -129,21 +170,21 @@ export async function upsert(table, values) {
 export async function remove(table, match) {
   try {
     const sb = await getSupabase();
-    // mappatura tabella per Supabase
-    const isChecklist = /^checklist(_.+)?$/.test(table);
-    const docId = isChecklist ? (table === 'checklist' ? 'fixed_list' : table.replace(/^checklist_/, '')) : null;
-    const remoteTable = isChecklist ? 'checklist_items' : table;
-    const remoteMatch = isChecklist ? { ...(match || {}), doc_id: docId } : (match || {});
+    const isChecklist = isChecklistTable(table);
+    const isDocuments = table === 'documents';
+    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
     if (!sb) {
       const data = removeOffline(table, match);
       logEvent('sync', 'delete_offline', { table, match });
       return { data, error: null };
     }
-    const { data, error } = await sb.from(remoteTable).delete().match(remoteMatch).select();
+    let query = sb.from(remoteTable).delete();
+    if (match?.id) query = query.eq('id', match.id);
+    const { data, error } = await query.select();
     if (error) throw error;
-    return { data, error: null };
+    const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data || []) : (data || []);
+    return { data: mapped, error: null };
   } catch (e) {
-    supabaseDisabled = true;
     const data = removeOffline(table, match);
     logEvent('sync', 'delete_offline_fallback', { table, reason: e?.message, match });
     return { data, error: null };
@@ -153,10 +194,10 @@ export async function remove(table, match) {
 export async function list(table, match = null) {
   try {
     const sb = await getSupabase();
-    const isChecklist = /^checklist(_.+)?$/.test(table);
-    const docId = isChecklist ? (table === 'checklist' ? 'fixed_list' : table.replace(/^checklist_/, '')) : null;
-    const remoteTable = isChecklist ? 'checklist_items' : table;
-    const remoteMatch = isChecklist ? { ...(match || {}), doc_id: docId } : (match || {});
+    const isChecklist = isChecklistTable(table);
+    const isDocuments = table === 'documents';
+    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
+    const dId = isChecklist ? docIdFromTable(table) : null;
     if (!sb) {
       const rows = readOffline(table);
       if (!match) return rows;
@@ -164,10 +205,23 @@ export async function list(table, match = null) {
       return rows.filter(r => Object.entries(match).every(([k, v]) => r[k] === v));
     }
     let query = sb.from(remoteTable).select('*');
-    if (remoteMatch && Object.keys(remoteMatch).length) query = query.match(remoteMatch);
+    if (isDocuments) {
+      query = query.like('title', `${DOC_MARK}%`);
+    } else if (isChecklist) {
+      query = query.like('title', `${CHK_MARK}${dId}|%`);
+    } else if (table === 'notes') {
+      // Escludi righe "tecniche" usate per compat layer
+      query = query
+        .not('title', 'like', `${DOC_MARK}%`)
+        .not('title', 'like', `${CHK_MARK}%`);
+    }
+    if (match && Object.keys(match).length && !isChecklist && !isDocuments) {
+      query = query.match(match);
+    }
     const { data, error } = await query;
     if (error) throw error;
-    return data || [];
+    const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data || []) : (data || []);
+    return mapped;
   } catch (e) {
     logEvent('sync', 'list_offline_fallback', { table, reason: e?.message });
     return readOffline(table);
@@ -177,18 +231,24 @@ export async function list(table, match = null) {
 export async function getById(table, id) {
   try {
     const sb = await getSupabase();
-    const isChecklist = /^checklist(_.+)?$/.test(table);
-    const docId = isChecklist ? (table === 'checklist' ? 'fixed_list' : table.replace(/^checklist_/, '')) : null;
-    const remoteTable = isChecklist ? 'checklist_items' : table;
+    const isChecklist = isChecklistTable(table);
+    const isDocuments = table === 'documents';
+    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
+    const dId = isChecklist ? docIdFromTable(table) : null;
     if (!sb) {
       const rows = readOffline(table);
       return rows.find(r => r.id === id) || null;
     }
     let query = sb.from(remoteTable).select('*').eq('id', id);
-    if (isChecklist) query = query.eq('doc_id', docId);
+    if (isDocuments) {
+      query = query.like('title', `${DOC_MARK}%`);
+    } else if (isChecklist) {
+      query = query.like('title', `${CHK_MARK}${dId}|%`);
+    }
     const { data, error } = await (query.maybeSingle?.() ?? query.single());
     if (error) throw error;
-    return data || null;
+    const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data ? [data] : []) : (data ? [data] : []);
+    return mapped[0] || null;
   } catch (e) {
     logEvent('sync', 'getById_offline_fallback', { table, reason: e?.message, id });
     const rows = readOffline(table);
@@ -200,14 +260,32 @@ export async function subscribe(table, callback) {
   try {
     const sb = await getSupabase();
     if (!sb) return () => {};
-    const isChecklist = /^checklist(_.+)?$/.test(table);
-    const docId = isChecklist ? (table === 'checklist' ? 'fixed_list' : table.replace(/^checklist_/, '')) : null;
-    const remoteTable = isChecklist ? 'checklist_items' : table;
-    const channelName = `table:${remoteTable}${docId ? ':' + docId : ''}`;
+    const isChecklist = isChecklistTable(table);
+    const isDocuments = table === 'documents';
+    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
+    const dId = isChecklist ? docIdFromTable(table) : null;
+    const channelName = `table:${remoteTable}`;
     const ch = sb.channel(channelName);
     const params = { event: '*', schema: 'public', table: remoteTable };
-    if (isChecklist) params.filter = `doc_id=eq.${docId}`;
-    ch.on('postgres_changes', params, payload => callback(payload));
+    ch.on('postgres_changes', params, payload => {
+      const t = payload?.new?.title || payload?.old?.title || '';
+      if (table === 'notes') {
+        // ignora gli eventi "tecnici"
+        if (t.startsWith(DOC_MARK) || t.startsWith(CHK_MARK)) return;
+        return callback(payload);
+      }
+      if (isDocuments) {
+        if (!t.startsWith(DOC_MARK)) return; // solo documents
+        return callback(payload);
+      }
+      if (isChecklist) {
+        const prefix = `${CHK_MARK}${dId}|`;
+        if (!t.startsWith(prefix)) return; // solo checklist del documento target
+        return callback(payload);
+      }
+      // di default, inoltra
+      return callback(payload);
+    });
     ch.subscribe();
     return () => sb.removeChannel(ch);
   } catch (e) {
