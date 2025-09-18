@@ -1,12 +1,12 @@
 // ui.js
 // Inizializza la UI, monta header, main (login o tools) e footer.
-import { initAuthUI, isAuthenticated, logout } from './auth.js?v=rox8';
-import { initChecklistUI } from './checklist.js?v=rox8';
-import * as Notes from './notes.js?v=rox8';
-import { initLoggerPanel, logEvent } from './logger.js?v=rox8';
-import { initBackgrounds } from './backgrounds.js?v=rox10';
-import { upsert as upsertMeta, remove as removeMeta, subscribe as subscribeMeta } from './sync.js?v=rox8';
-import { list as listMeta } from './sync.js?v=rox8';
+import { initAuthUI, isAuthenticated, logout } from './auth.js?v=rox11';
+import { initChecklistUI } from './checklist.js?v=rox11';
+import * as Notes from './notes.js?v=rox11';
+import { initLoggerPanel, logEvent } from './logger.js?v=rox11';
+import { initBackgrounds } from './backgrounds.js?v=rox11';
+import { upsert as upsertMeta, remove as removeMeta, subscribe as subscribeMeta } from './sync.js?v=rox11';
+import { list as listMeta } from './sync.js?v=rox11';
 
 // Util per id
 function uid() { return Math.random().toString(36).slice(2); }
