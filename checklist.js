@@ -331,6 +331,13 @@ export function initChecklistUI(container, opts = {}) {
       <button class="button" id="add-item">Aggiungi</button>
     </div>
   `;
+  // Disabilita aggiunta di voci nella lista fissa per evitare contaminazioni
+  const addBtn = input.querySelector('#add-item');
+  const addText = input.querySelector('#new-item-text');
+  if (isFixed) {
+    if (addBtn) { addBtn.disabled = true; addBtn.title = 'La lista fissa non è modificabile'; }
+    if (addText) { addText.disabled = true; addText.placeholder = 'Lista fissa non modificabile'; }
+  }
 
   const grid = document.createElement('div');
   grid.className = 'checklists';
@@ -349,6 +356,9 @@ export function initChecklistUI(container, opts = {}) {
         const byId = new Map(state.items.map(i => [i.id, i]));
         rows.forEach(r => {
           if (r && r.id) {
+            const isFxCand = (r.fixed === true) || (r.id && /^fixed_/i.test(r.id));
+            // Protezione simmetrica: nella lista fissa ignora voci non-fisse
+            if (isFixed && !isFxCand) return;
             // Protezione: in checklist personalizzate ignora eventuali item fissi della lista principale
             if (!isFixed && /^fixed_/i.test(String(r.id))) return;
             const prev = byId.get(r.id) || {};
@@ -410,6 +420,7 @@ export function initChecklistUI(container, opts = {}) {
     }, 5000);
     })();
   input.querySelector('#add-item').addEventListener('click', () => {
+    if (isFixed) return; // blocca inserimento nella lista fissa
     const text = input.querySelector('#new-item-text').value.trim();
     if (!text) return;
     const item = createItem(text, LEFT, false);
