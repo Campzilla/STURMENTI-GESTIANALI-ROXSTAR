@@ -55,7 +55,7 @@ export function toggleBackground(snippet, enable) {
   if (enable && !exists) {
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = `./backgrounds/${snippet}.js?v=rox8&cb=${Date.now()}`;
+    s.src = `./backgrounds/${snippet}.js?v=rox18&cb=${Date.now()}`;
     s.id = id;
     document.body.appendChild(s);
     if (!active.includes(snippet)) active.push(snippet);
@@ -67,7 +67,6 @@ export function toggleBackground(snippet, enable) {
         if (canvas && typeof canvas.__cleanup === 'function') canvas.__cleanup();
         else if (canvas) canvas.remove();
       }
-      // cleanup generico opzionale esposto dagli snippet
       const fn = window[`__cleanup_${snippet}`];
       if (typeof fn === 'function') fn();
     } catch {}
@@ -82,7 +81,7 @@ export function loadBackground(snippet){
     const s = document.createElement('script');
     s.type = 'module';
     s.defer = true;
-    s.src = `./backgrounds/${snippet}.js?v=rox13`;
+    s.src = `./backgrounds/${snippet}.js?v=rox18&cb=${Date.now()}`;
     document.body.appendChild(s);
     logEvent('bg_load', 'append_script', { snippet });
   } catch (e) {
