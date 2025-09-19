@@ -2,9 +2,9 @@
 /**
  * UI Note con editor semplice titolo + testo
  */
-import { logEvent, logError } from './logger.js?v=rox13';
-import { upsert, remove } from './sync.js?v=rox13';
-import { getById, subscribe as subscribeSync } from './sync.js?v=rox13';
+import { logEvent, logError } from './logger.js?v=rox18';
+import { upsert, remove } from './sync.js?v=rox18';
+import { getById, subscribe as subscribeSync } from './sync.js?v=rox18';
 
 export const Notes = {
   currentNoteId: null

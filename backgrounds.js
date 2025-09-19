@@ -2,7 +2,15 @@
 /**
  * Caricamento snippet esterni dalla cartella ./backgrounds e attivazione/disattivazione.
  */
-import { logEvent } from './logger.js?v=rox13';
+import { logEvent } from './logger.js?v=rox18';
+// Bump manuale dei background snippet per evitare caching persistente
+const loadSnippet = (snippet) => {
+  const s = document.createElement('script');
+  s.type = 'text/javascript';
+  s.async = true;
+  s.src = `./backgrounds/${snippet}.js?v=rox18&cb=${Date.now()}`;
+  document.head.appendChild(s);
+};
 
 let active = [];
 let lastInitToken = 0; // evita race tra chiamate ravvicinate

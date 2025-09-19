@@ -3,8 +3,8 @@
  * Gestione autenticazione e whitelist.
  * La whitelist non è in chiaro nel repo: verrà fornita via Secrets/Actions e caricata come config runtime.
  */
-import { logEvent, logError } from './logger.js?v=rox13';
-import { getConfig } from './sync.js?v=rox13';
+import { logEvent, logError } from './logger.js?v=rox18';
+import { getConfig } from './sync.js?v=rox18';
 
 const AUTH_KEY = 'roxstar_auth_user';
 let cachedWhitelist = null;
