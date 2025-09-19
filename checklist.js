@@ -347,6 +347,8 @@ export function initChecklistUI(container, opts = {}) {
         const byId = new Map(state.items.map(i => [i.id, i]));
         rows.forEach(r => {
           if (r && r.id) {
+            // Protezione: in checklist personalizzate ignora eventuali item fissi della lista principale
+            if (!isFixed && /^fixed_/i.test(String(r.id))) return;
             const prev = byId.get(r.id) || {};
             const isFx = (r.fixed === true) || (prev.fixed === true) || (r.id && /^fixed_/i.test(r.id));
             const col = (r.column === RIGHT ? RIGHT : (r.column === LEFT ? LEFT : (r.column === 'right' ? RIGHT : (prev.column === RIGHT ? RIGHT : LEFT))));
@@ -357,7 +359,7 @@ export function initChecklistUI(container, opts = {}) {
               text,
               checked: (r.checked !== undefined ? !!r.checked : !!prev.checked),
               column: col,
-              fixed: isFx
+              fixed: isFx && isFixed // se non è la lista fissa, forzare non-fisso
             };
             byId.set(item.id, item);
           }

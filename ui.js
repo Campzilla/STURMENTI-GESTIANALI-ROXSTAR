@@ -80,8 +80,13 @@ function refreshDocsList() {
     // fallback estremo: reinietta la lista fissa
     DOCS.set('fixed_list', { title: 'LISTA DAA SPESSA', type: 'checklist' });
   }
+  // Filtra eventuali artefatti di self-test (non mostrarli mai in lista)
+  const visibleEntries = Array.from(DOCS.entries()).filter(([id, meta]) => {
+    const t = (meta?.title || '').toLowerCase();
+    return !(String(id).startsWith('test_') || t.includes('self test doc'));
+  });
   // ordina con la lista fissa in cima
-  const sorted = Array.from(DOCS.entries()).sort((a, b) => {
+  const sorted = visibleEntries.sort((a, b) => {
     if (a[0] === 'fixed_list') return -1;
     if (b[0] === 'fixed_list') return 1;
     const ta = a[1]?.type || '';
@@ -102,9 +107,16 @@ function refreshDocsList() {
 }
 window.addEventListener('doc_saved', (e) => {
   const { id, title, type } = e.detail || {};
+  const existed = id ? DOCS.has(id) : false; // valuta PRIMA di aggiornare DOCS
   if (id && title) DOCS.set(id, { title, type: type || (id === 'fixed_list' ? 'checklist' : 'note') });
-  // persisti meta documento
-  if (id && title) upsertMeta('documents', { id, title, type: type || (id === 'fixed_list' ? 'checklist' : 'note') });
+  // Aggiorna meta documento su backend SOLO quando necessario per non sovrascrivere il testo delle note
+  // - Checklist: sempre (serve solo il catalogo)
+  // - Note: solo alla creazione (quando il documento non esisteva nel catalogo)
+  const isChecklist = (type === 'checklist') || (id === 'fixed_list');
+  const isNewDoc = !existed;
+  if (isChecklist || isNewDoc) {
+    if (id && title) upsertMeta('documents', { id, title, type: type || (id === 'fixed_list' ? 'checklist' : 'note') });
+  }
   refreshDocsList();
 });
 window.addEventListener('doc_removed', (e) => {
@@ -367,7 +379,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 window.addEventListener('storage', (e) => { if (e.key === 'roxstar_auth_user') render(); });
 
-// Self-test sincronizzazione: crea un documento di prova e verifica realtime/polling
+// Self-test sincronizzazione: non invasivo, nessun documento visibile creato
 async function runSyncSelfTest() {
   const indicator = document.getElementById('sync-selftest');
   if (indicator) { indicator.textContent = 'Testing…'; indicator.style.color = '#aaa'; }
@@ -375,9 +387,7 @@ async function runSyncSelfTest() {
   const table = `checklist_${testId}`;
   const itemId = 't_' + uid();
   try {
-    // 1) Pubblica meta documento
-    await upsertMeta('documents', { id: testId, title: 'Self Test Doc', type: 'checklist' });
-    // 2) Prepara listener realtime specifico per la checklist
+    // 1) Prepara listener realtime specifico per la checklist (senza creare meta-documenti visibili)
     let gotRealtime = false;
     let gotPolling = false;
     let unsub = null;
@@ -391,28 +401,28 @@ async function runSyncSelfTest() {
         } catch {}
       });
     } catch {}
-    // 3) Upsert di un item che dovrebbe generare evento realtime
+    // 2) Upsert di un item che dovrebbe generare evento realtime
     await upsertMeta(table, { id: itemId, text: 'ping', checked: false, column: 'left', fixed: false });
-    // 4) Attendi fino a 2.5s per realtime
+    // 3) Attendi fino a 2.5s per realtime
     await new Promise(r => setTimeout(r, 2500));
     if (!gotRealtime) {
-      // 5) Fallback: polling per verificare la presenza dei dati entro 5s
+      // 4) Fallback: polling per verificare la presenza dei dati entro 5s
       try {
         const rows = await listMeta(table);
         if (Array.isArray(rows) && rows.find(x => x.id === itemId)) gotPolling = true;
       } catch {}
     }
-    // 6) Aggiorna UI
+    // 5) Aggiorna UI
     if (indicator) {
       if (gotRealtime) { indicator.textContent = 'Self-test: realtime OK'; indicator.style.color = '#1db954'; }
       else if (gotPolling) { indicator.textContent = 'Self-test: polling OK'; indicator.style.color = '#e6b800'; }
       else { indicator.textContent = 'Self-test: FAIL'; indicator.style.color = '#e74c3c'; }
     }
     logEvent('selftest', 'sync_result', { realtime: gotRealtime, polling: gotPolling });
-    // 7) Cleanup soft (non bloccare in caso fallisca)
+    // 6) Cleanup soft (non bloccare in caso fallisca)
     try { if (typeof unsub === 'function') unsub(); } catch {}
     try { await removeMeta(table, { id: itemId }); } catch {}
-    try { await removeMeta('documents', { id: testId }); } catch {}
+    // nessuna rimozione documenti perché non creati
   } catch (e) {
     if (indicator) { indicator.textContent = 'Self-test: ERROR'; indicator.style.color = '#e74c3c'; }
     logEvent('selftest', 'error', { message: e?.message });

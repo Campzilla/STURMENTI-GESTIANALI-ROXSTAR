@@ -96,11 +96,24 @@ export function initNotesUI(container) {
   } catch {}
 }
 
-export function openNote(container, meta = {}) {
+export async function openNote(container, meta = {}) {
   const { id, title: initialTitle = '', body: initialBody = '' } = meta || {};
   Notes.currentNoteId = id || null;
   const inputs = container.querySelectorAll('input[type="text"], textarea');
   const [title, body] = inputs;
+  // Se ho un id, prova a caricare dal backend/offline lo stato reale della nota
+  if (Notes.currentNoteId) {
+    try {
+      const row = await getById('notes', Notes.currentNoteId);
+      if (row) {
+        if (title) title.value = row.title || initialTitle || '';
+        if (body) body.value = (typeof row.body === 'string' ? row.body : (initialBody || ''));
+        return;
+      }
+    } catch (e) {
+      // in caso di errore, fallback ai meta iniziali
+    }
+  }
   if (title) title.value = initialTitle || '';
   if (body) body.value = initialBody || '';
 }
