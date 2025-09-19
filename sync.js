@@ -78,6 +78,37 @@ function readOffline(table){
 function writeOffline(table, rows){
   try { localStorage.setItem(lsKey(table), JSON.stringify(rows)); } catch {}
 }
+
+// Tombstones per gestire cancellazioni offline/idempotenti
+const TS_PREFIX = 'roxstar_tombstones_';
+function tsKey(table){ return `${TS_PREFIX}${table}`; }
+function readTombstones(table){
+  try { return (JSON.parse(localStorage.getItem(tsKey(table)) || '[]') || []).filter(x => x && x.id); } catch { return []; }
+}
+function writeTombstones(table, arr){ try { localStorage.setItem(tsKey(table), JSON.stringify(arr)); } catch {} }
+const TS_TTL = 1000 * 60 * 60 * 24; // 24h
+function isTombstoned(table, id){
+  if (!id) return false;
+  const now = Date.now();
+  const arr = readTombstones(table).filter(x => (now - (x.ts || 0)) < TS_TTL);
+  if (arr.length !== readTombstones(table).length) writeTombstones(table, arr);
+  return !!arr.find(x => x.id === id);
+}
+function addTombstone(table, id){
+  if (!id) return;
+  const now = Date.now();
+  const arr = readTombstones(table).filter(x => (now - (x.ts || 0)) < TS_TTL && x.id !== id);
+  arr.push({ id, ts: now });
+  writeTombstones(table, arr);
+}
+function clearTombstone(table, id){
+  if (!id) return;
+  const now = Date.now();
+  const arr = readTombstones(table).filter(x => (now - (x.ts || 0)) < TS_TTL && x.id !== id);
+  writeTombstones(table, arr);
+}
+export { isTombstoned };
+
 function upsertOffline(table, values){
   const arr = Array.isArray(values) ? values : [values];
   const existing = readOffline(table);
@@ -90,7 +121,11 @@ function upsertOffline(table, values){
 function removeOffline(table, match){
   const existing = readOffline(table);
   let filtered = existing;
-  if (match && match.id) filtered = existing.filter(r => r.id !== match.id);
+  if (match && match.all === true) {
+    filtered = [];
+  } else if (match && match.id) {
+    filtered = existing.filter(r => r.id !== match.id);
+  }
   writeOffline(table, filtered);
   return filtered;
 }
@@ -146,6 +181,8 @@ export async function upsert(table, values) {
   try {
     const sb = await getSupabase();
     const arr = Array.isArray(values) ? values : [values];
+    // Annulla eventuali tombstones per gli id che si stanno re-inserendo
+    try { arr.forEach(r => { if (r && r.id) clearTombstone(table, r.id); }); } catch {}
     const isChecklist = isChecklistTable(table);
     const isDocuments = table === 'documents';
     const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
@@ -175,17 +212,31 @@ export async function remove(table, match) {
     const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
     if (!sb) {
       const data = removeOffline(table, match);
+      if (match?.id) addTombstone(table, match.id);
       logEvent('sync', 'delete_offline', { table, match });
       return { data, error: null };
     }
     let query = sb.from(remoteTable).delete();
-    if (match?.id) query = query.eq('id', match.id);
+    if (match?.id) {
+      query = query.eq('id', match.id);
+    } else if (isChecklist && match?.all === true) {
+      const dId = docIdFromTable(table);
+      const prefix = `${CHK_MARK}${dId}|`;
+      query = query.like('title', `${prefix}%`);
+    } else if (isDocuments && match?.all === true) {
+      // protezione: non consentire delete-all del catalogo documenti
+      throw new Error('Refuse to delete-all on documents');
+    }
     const { data, error } = await query.select();
     if (error) throw error;
+    if (match?.id) addTombstone(table, match.id);
+    // se match.all su checklist, svuota anche l’offline
+    if (isChecklist && match?.all === true) { try { writeOffline(table, []); } catch {} }
     const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data || []) : (data || []);
     return { data: mapped, error: null };
   } catch (e) {
     const data = removeOffline(table, match);
+    if (match?.id) addTombstone(table, match.id);
     logEvent('sync', 'delete_offline_fallback', { table, reason: e?.message, match });
     return { data, error: null };
   }
@@ -200,9 +251,10 @@ export async function list(table, match = null) {
     const dId = isChecklist ? docIdFromTable(table) : null;
     if (!sb) {
       const rows = readOffline(table);
-      if (!match) return rows;
+      const filtered = rows.filter(r => !isTombstoned(table, r?.id));
+      if (!match) return filtered;
       // filtro semplice lato client
-      return rows.filter(r => Object.entries(match).every(([k, v]) => r[k] === v));
+      return filtered.filter(r => Object.entries(match).every(([k, v]) => r[k] === v));
     }
     let query = sb.from(remoteTable).select('*');
     if (isDocuments) {
@@ -221,10 +273,10 @@ export async function list(table, match = null) {
     const { data, error } = await query;
     if (error) throw error;
     const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data || []) : (data || []);
-    return mapped;
+    return mapped.filter(r => !isTombstoned(table, r?.id));
   } catch (e) {
     logEvent('sync', 'list_offline_fallback', { table, reason: e?.message });
-    return readOffline(table);
+    return readOffline(table).filter(r => !isTombstoned(table, r?.id));
   }
 }
 
@@ -269,6 +321,9 @@ export async function subscribe(table, callback) {
     const params = { event: '*', schema: 'public', table: remoteTable };
     ch.on('postgres_changes', params, payload => {
       const t = payload?.new?.title || payload?.old?.title || '';
+      const idPayload = (payload?.new?.id) || (payload?.old?.id);
+      const evt = payload?.eventType || payload?.event;
+      if (idPayload && isTombstoned(table, idPayload) && evt !== 'DELETE') return; // filtra reintroduzioni
       if (table === 'notes') {
         // ignora gli eventi "tecnici"
         if (t.startsWith(DOC_MARK) || t.startsWith(CHK_MARK)) return;
@@ -276,11 +331,13 @@ export async function subscribe(table, callback) {
       }
       if (isDocuments) {
         if (!t.startsWith(DOC_MARK)) return; // solo documents
+        if (idPayload && isTombstoned(table, idPayload) && evt !== 'DELETE') return;
         return callback(payload);
       }
       if (isChecklist) {
         const prefix = `${CHK_MARK}${dId}|`;
         if (!t.startsWith(prefix)) return; // solo checklist del documento target
+        if (idPayload && isTombstoned(table, idPayload) && evt !== 'DELETE') return;
         return callback(payload);
       }
       // di default, inoltra

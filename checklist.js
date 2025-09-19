@@ -258,12 +258,10 @@ export function initChecklistUI(container, opts = {}) {
   deleteBtn.addEventListener('click', async () => {
     if (isFixed) return;
     if (!confirm('Eliminare questa checklist?')) return;
-    // elimina tutti gli item salvati offline/online
+    // elimina tutti gli item salvati offline/online per questo documento
     try {
-      const raw = JSON.parse(localStorage.getItem('roxstar_table_' + table) || '[]');
-      if (Array.isArray(raw)) {
-        for (const r of raw) await remove(table, { id: r.id });
-      }
+      await remove(table, { all: true });
+      try { localStorage.removeItem('roxstar_meta_' + table); } catch {}
     } catch {}
     states.delete(docId);
     window.dispatchEvent(new CustomEvent('doc_removed', { detail: { id: docId } }));
