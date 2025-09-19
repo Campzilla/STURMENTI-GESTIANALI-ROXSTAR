@@ -312,7 +312,7 @@ export function render() {
   
   // Gestione robusta degli sfondi durante il cambio login/strumenti
   const isLogin = document.body.classList.contains('login-bg');
-  import('./backgrounds.js?v=rox10').then(mod => {
+  import('./backgrounds.js?v=rox18').then(mod => {
     // Prima disattivo tutti gli sfondi
     mod.toggleBackground('vantaDiskLogin', false);
     mod.toggleBackground('vantaFogTools', false);
