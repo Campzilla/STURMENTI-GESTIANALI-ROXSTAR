@@ -1,12 +1,12 @@
 // ui.js
 // Inizializza la UI, monta header, main (login o tools) e footer.
-import { initAuthUI, isAuthenticated, logout } from './auth.js?v=rox18';
-import { initChecklistUI, cleanupChecklistEffects } from './checklist.js?v=rox18';
-import * as Notes from './notes.js?v=rox18';
-import { initLoggerPanel, logEvent } from './logger.js?v=rox18';
-import { initBackgrounds } from './backgrounds.js?v=rox18';
-import { upsert as upsertMeta, remove as removeMeta, subscribe as subscribeMeta } from './sync.js?v=rox18';
-import { list as listMeta } from './sync.js?v=rox18';
+import { initAuthUI, isAuthenticated, logout } from './auth.js?v=rox19';
+import { initChecklistUI, cleanupChecklistEffects } from './checklist.js?v=rox19';
+import * as Notes from './notes.js?v=rox19';
+import { initLoggerPanel, logEvent } from './logger.js?v=rox19';
+import { initBackgrounds } from './backgrounds.js?v=rox19';
+import { upsert as upsertMeta, remove as removeMeta, subscribe as subscribeMeta } from './sync.js?v=rox19';
+import { list as listMeta } from './sync.js?v=rox19';
 
 // Util per id
 function uid() { return Math.random().toString(36).slice(2); }
@@ -312,7 +312,7 @@ export function render() {
   
   // Gestione robusta degli sfondi durante il cambio login/strumenti
   const isLogin = document.body.classList.contains('login-bg');
-  import('./backgrounds.js?v=rox18').then(mod => {
+  import('./backgrounds.js?v=rox19').then(mod => {
     // Prima disattivo tutti gli sfondi
     mod.toggleBackground('vantaDiskLogin', false);
     mod.toggleBackground('vantaFogTools', false);

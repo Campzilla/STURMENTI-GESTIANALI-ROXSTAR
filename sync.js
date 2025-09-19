@@ -133,11 +133,13 @@ function removeOffline(table, match){
 // ===== Compat layer: mappa documents/checklist su 'notes' =====
 const DOC_MARK = '__DOC__:'; // title prefisso per documents
 const CHK_MARK = '__CHK__:'; // title prefisso per checklist, seguito da `${docId}|`
+const DOCMETA_PREFIX = 'docmeta_';
+function docMetaRemoteId(docId){ return `${DOCMETA_PREFIX}${docId}`; }
 function isChecklistTable(t){ return /^checklist(_.+)?$/.test(t); }
 function docIdFromTable(t){ return t === 'checklist' ? 'fixed_list' : t.replace(/^checklist_/, ''); }
 function toRemoteRows(table, arr){
   if (table === 'documents') {
-    return arr.map(r => ({ id: r.id, title: `${DOC_MARK}${r.title || ''}`, body: JSON.stringify({ type: r?.type || 'note' }) }));
+    return arr.map(r => ({ id: docMetaRemoteId(r.id), title: `${DOC_MARK}${r.title || ''}`, body: JSON.stringify({ type: r?.type || 'note', docId: r.id }) }));
   }
   if (isChecklistTable(table)) {
     const dId = docIdFromTable(table);
@@ -155,9 +157,11 @@ function fromRemoteRows(table, rows){
   if (table === 'documents') {
     return rows.map(r => {
       let type = 'note';
-      try { type = JSON.parse(r.body || '{}')?.type || 'note'; } catch {}
+      let docId = null;
+      try { const parsed = JSON.parse(r.body || '{}') || {}; type = parsed?.type || 'note'; docId = parsed?.docId || null; } catch {}
       const title = (r.title || '').startsWith(DOC_MARK) ? r.title.slice(DOC_MARK.length) : (r.title || '');
-      return { id: r.id, title, type };
+      const id = docId || (String(r.id || '').startsWith(DOCMETA_PREFIX) ? String(r.id).slice(DOCMETA_PREFIX.length) : r.id);
+      return { id, title, type };
     });
   }
   if (isChecklistTable(table)) {
@@ -194,6 +198,16 @@ export async function upsert(table, values) {
     }
     const { data, error } = await sb.from(remoteTable).upsert(toRemote).select();
     if (error) throw error;
+    // Cleanup legacy meta rows (pre-fix) che usavano id uguale alla nota
+    if (isDocuments) {
+      try {
+        for (const r of arr) {
+          if (r && r.id) {
+            await sb.from('notes').delete().eq('id', r.id).like('title', `${DOC_MARK}%`);
+          }
+        }
+      } catch {}
+    }
     const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data || []) : (data || []);
     return { data: mapped, error: null };
   } catch (e) {
@@ -218,7 +232,12 @@ export async function remove(table, match) {
     }
     let query = sb.from(remoteTable).delete();
     if (match?.id) {
-      query = query.eq('id', match.id);
+      if (isDocuments) {
+        // delete meta nuova
+        query = query.eq('id', docMetaRemoteId(match.id));
+      } else {
+        query = query.eq('id', match.id);
+      }
     } else if (isChecklist && match?.all === true) {
       const dId = docIdFromTable(table);
       const prefix = `${CHK_MARK}${dId}|`;
@@ -229,6 +248,10 @@ export async function remove(table, match) {
     }
     const { data, error } = await query.select();
     if (error) throw error;
+    // cleanup meta legacy (pre-fix)
+    if (isDocuments && match?.id) {
+      try { await sb.from('notes').delete().eq('id', match.id).like('title', `${DOC_MARK}%`); } catch {}
+    }
     if (match?.id) addTombstone(table, match.id);
     // se match.all su checklist, svuota anche l’offline
     if (isChecklist && match?.all === true) { try { writeOffline(table, []); } catch {} }
@@ -291,11 +314,16 @@ export async function getById(table, id) {
       const rows = readOffline(table);
       return rows.find(r => r.id === id) || null;
     }
-    let query = sb.from(remoteTable).select('*').eq('id', id);
+    let query = sb.from(remoteTable).select('*');
     if (isDocuments) {
-      query = query.like('title', `${DOC_MARK}%`);
+      query = query.eq('id', docMetaRemoteId(id));
     } else if (isChecklist) {
-      query = query.like('title', `${CHK_MARK}${dId}|%`);
+      query = query.like('title', `${CHK_MARK}${dId}|%`).eq('id', id);
+    } else {
+      // plain notes: escludi righe tecniche eventualmente rimaste
+      query = query.eq('id', id)
+        .not('title', 'like', `${DOC_MARK}%`)
+        .not('title', 'like', `${CHK_MARK}%`);
     }
     const { data, error } = await (query.maybeSingle?.() ?? query.single());
     if (error) throw error;
@@ -321,24 +349,30 @@ export async function subscribe(table, callback) {
     const params = { event: '*', schema: 'public', table: remoteTable };
     ch.on('postgres_changes', params, payload => {
       const t = payload?.new?.title || payload?.old?.title || '';
-      const idPayload = (payload?.new?.id) || (payload?.old?.id);
       const evt = payload?.eventType || payload?.event;
-      if (idPayload && isTombstoned(table, idPayload) && evt !== 'DELETE') return; // filtra reintroduzioni
+      // NOTA: per 'notes' filtriamo i "tecnici" e inoltriamo raw
       if (table === 'notes') {
-        // ignora gli eventi "tecnici"
         if (t.startsWith(DOC_MARK) || t.startsWith(CHK_MARK)) return;
         return callback(payload);
       }
+      // documents: mappo su id locale e shape locale
       if (isDocuments) {
         if (!t.startsWith(DOC_MARK)) return; // solo documents
-        if (idPayload && isTombstoned(table, idPayload) && evt !== 'DELETE') return;
-        return callback(payload);
+        const mappedNew = payload?.new ? fromRemoteRows('documents', [payload.new])[0] : null;
+        const mappedOld = payload?.old ? fromRemoteRows('documents', [payload.old])[0] : null;
+        const localId = (mappedNew && mappedNew.id) || (mappedOld && mappedOld.id) || null;
+        if (localId && isTombstoned(table, localId) && evt !== 'DELETE') return; // filtra reintroduzioni
+        return callback({ ...payload, new: mappedNew, old: mappedOld });
       }
+      // checklist: filtra per prefisso e mappa le righe
       if (isChecklist) {
         const prefix = `${CHK_MARK}${dId}|`;
         if (!t.startsWith(prefix)) return; // solo checklist del documento target
-        if (idPayload && isTombstoned(table, idPayload) && evt !== 'DELETE') return;
-        return callback(payload);
+        const mappedNew = payload?.new ? fromRemoteRows(table, [payload.new])[0] : null;
+        const mappedOld = payload?.old ? fromRemoteRows(table, [payload.old])[0] : null;
+        const localId = (mappedNew && mappedNew.id) || (mappedOld && mappedOld.id) || null;
+        if (localId && isTombstoned(table, localId) && evt !== 'DELETE') return; // filtra reintroduzioni
+        return callback({ ...payload, new: mappedNew, old: mappedOld });
       }
       // di default, inoltra
       return callback(payload);

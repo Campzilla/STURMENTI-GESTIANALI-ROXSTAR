@@ -2,13 +2,13 @@
 /**
  * Caricamento snippet esterni dalla cartella ./backgrounds e attivazione/disattivazione.
  */
-import { logEvent } from './logger.js?v=rox18';
+import { logEvent } from './logger.js?v=rox19';
 // Bump manuale dei background snippet per evitare caching persistente
 const loadSnippet = (snippet) => {
   const s = document.createElement('script');
   s.type = 'text/javascript';
   s.async = true;
-  s.src = `./backgrounds/${snippet}.js?v=rox18&cb=${Date.now()}`;
+  s.src = `./backgrounds/${snippet}.js?v=rox19&cb=${Date.now()}`;
   document.head.appendChild(s);
 };
 
@@ -55,7 +55,7 @@ export function toggleBackground(snippet, enable) {
   if (enable && !exists) {
     const s = document.createElement('script');
     s.type = 'module';
-    s.src = `./backgrounds/${snippet}.js?v=rox18&cb=${Date.now()}`;
+    s.src = `./backgrounds/${snippet}.js?v=rox19&cb=${Date.now()}`;
     s.id = id;
     document.body.appendChild(s);
     if (!active.includes(snippet)) active.push(snippet);
@@ -81,7 +81,7 @@ export function loadBackground(snippet){
     const s = document.createElement('script');
     s.type = 'module';
     s.defer = true;
-    s.src = `./backgrounds/${snippet}.js?v=rox18&cb=${Date.now()}`;
+    s.src = `./backgrounds/${snippet}.js?v=rox19&cb=${Date.now()}`;
     document.body.appendChild(s);
     logEvent('bg_load', 'append_script', { snippet });
   } catch (e) {
