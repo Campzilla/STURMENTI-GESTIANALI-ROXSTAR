@@ -234,9 +234,9 @@ function footer() {
 }
 
 // Stato documento selezionato (mostra un solo documento alla volta)
-let currentDoc = { type: 'checklist', id: 'fixed_list' };
+let currentDoc = { type: null, id: null };
 // Avvio in modalità login se non autenticato
-if (!isAuthenticated()) currentDoc = { type: 'checklist', id: 'fixed_list' };
+if (!isAuthenticated()) currentDoc = { type: null, id: null };
 function selectDocument(id) {
   const meta = DOCS.get(id);
   if (meta?.type) currentDoc = { type: meta.type, id };
@@ -271,15 +271,19 @@ function toolsPage() {
   const layout = el('div', { style: 'display:grid; grid-template-columns: 1fr; gap:16px;' });
 
   const docArea = el('section', { class: '' });
-  if (currentDoc.type === 'checklist') {
+  if (currentDoc && currentDoc.type === 'checklist') {
     const meta = DOCS.get(currentDoc.id) || {};
-    initChecklistUI(docArea, { id: currentDoc.id || 'fixed_list', title: meta.title });
-  } else {
+    initChecklistUI(docArea, { id: currentDoc.id, title: meta.title });
+  } else if (currentDoc && currentDoc.type === 'note') {
     Notes.initNotesUI(docArea);
     if (currentDoc.id && typeof Notes.openNote === 'function') {
       const meta = DOCS.get(currentDoc.id) || {};
       Notes.openNote(docArea, { id: currentDoc.id, title: meta.title || '', body: '' });
     }
+  } else {
+    // Nessun documento selezionato: mostra solo pannello documenti e un placeholder
+    const placeholder = el('div', { class: 'muted', style: 'padding:8px 0;' }, 'Seleziona un documento dal pannello a sinistra.');
+    docArea.appendChild(placeholder);
   }
 
   layout.append(documentsPanel(), docArea);

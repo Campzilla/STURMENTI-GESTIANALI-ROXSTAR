@@ -45,7 +45,9 @@ function restoreOfflineChecklist(table) {
           const it = byId.get(r.id);
           if (it) { it.checked = !!r.checked; it.column = r.column === RIGHT ? RIGHT : LEFT; }
         } else {
-          // re-inserisci le voci custom se mancanti
+          // se sto ripristinando la tabella fixed ("checklist"), NON re-inserire voci non fisse
+          if (table === 'checklist') return;
+          // re-inserisci le voci custom se mancanti per checklist personalizzate
           if (!byId.has(r.id)) { state.items.push({ ...r, fixed: false }); byId.set(r.id, r); }
         }
       }
