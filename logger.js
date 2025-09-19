@@ -102,3 +102,20 @@ function refreshPanel(filterText = '') {
   // auto-scroll in fondo
   list.scrollTop = list.scrollHeight;
 }
+
+// Capture globale di errori runtime per diagnosi rapida
+if (typeof window !== 'undefined' && !window.__rox_logger_bound) {
+  window.__rox_logger_bound = true;
+  window.addEventListener('error', (e) => {
+    try {
+      const err = e.error || new Error(e.message || 'window.error');
+      logError('global_error', err, { source: e.filename, lineno: e.lineno, colno: e.colno });
+    } catch {}
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    try {
+      const reason = e.reason instanceof Error ? e.reason : new Error(typeof e.reason === 'string' ? e.reason : JSON.stringify(e.reason));
+      logError('unhandled_rejection', reason, {});
+    } catch {}
+  });
+}
