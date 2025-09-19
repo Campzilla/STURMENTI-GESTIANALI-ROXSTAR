@@ -64,8 +64,9 @@ subscribeMeta('documents', (payload) => {
     } else if ((evt === 'DELETE' || !newRow) && oldRow?.id) {
       if (oldRow.id !== 'fixed_list') DOCS.delete(oldRow.id);
       refreshDocsList();
-      if (currentDoc.id === oldRow.id) { currentDoc = { type: 'checklist', id: 'fixed_list' }; render(); }
-    }
+      // Se sto visualizzando il documento rimosso, non forzare la fixed_list: torna al placeholder
+      if (currentDoc.id === oldRow.id) { currentDoc = { type: null, id: null }; render(); }
+     }
   } catch {}
 });
 
