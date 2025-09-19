@@ -19,13 +19,21 @@ function stableIdForFixed(text){
 
 // Stato per-documento
 const states = new Map();
+// Registry di cleanup per evitare leak tra re-render/document switch
+const activeCleanups = [];
+export function cleanupChecklistEffects() {
+  while (activeCleanups.length) {
+    const fn = activeCleanups.pop();
+    try { fn && fn(); } catch {}
+  }
+}
 function getState(docId) {
   if (!states.has(docId)) {
     states.set(docId, { items: [], fixedLoaded: docId !== 'fixed_list', fixedAnnounced: false, title: 'Checklist', leftLabel: 'Da comprare', rightLabel: 'Comprato / in Frigo' });
   }
   return states.get(docId);
 }
-// stato corrente puntato dinamicamente
+// stato corrente puntato dinamicamente (legacy). Evitare nelle nuove funzioni.
 let state = getState('fixed_list');
 
 function createItem(text, column = LEFT, fixed = false) {
@@ -33,37 +41,34 @@ function createItem(text, column = LEFT, fixed = false) {
   return { id, text, checked: false, column, fixed };
 }
 
-function restoreOfflineChecklist(table) {
+function restoreOfflineChecklist(table, s) {
   try {
     const saved = JSON.parse(localStorage.getItem('roxstar_table_' + table) || '[]');
     if (!Array.isArray(saved)) return;
-    const byId = new Map(state.items.map(i => [i.id, i]));
+    const byId = new Map((s.items || []).map(i => [i.id, i]));
     saved.forEach(r => {
       if (r && r.id) {
         if (r.fixed) {
-          // aggiorna lo stato delle voci fisse esistenti
           const it = byId.get(r.id);
           if (it) { it.checked = !!r.checked; it.column = r.column === RIGHT ? RIGHT : LEFT; }
         } else {
-          // se sto ripristinando la tabella fixed ("checklist"), NON re-inserire voci non fisse
           if (table === 'checklist') return;
-          // re-inserisci le voci custom se mancanti per checklist personalizzate
-          if (!byId.has(r.id)) { state.items.push({ ...r, fixed: false }); byId.set(r.id, r); }
+          if (!byId.has(r.id)) { s.items.push({ ...r, fixed: false }); byId.set(r.id, r); }
         }
       }
     });
   } catch {}
 }
 
-async function ensureFixedList() {
-  if (state.fixedLoaded) return;
+async function ensureFixedListFor(s) {
+  if (s.fixedLoaded) return;
   try {
     const res = await fetch('./Assets e risorse/TESTI_APP.txt');
-    if (!res.ok) { state.fixedLoaded = true; return; }
+    if (!res.ok) { s.fixedLoaded = true; return; }
     const text = await res.text();
     const lines = text.split(/\r?\n/);
     const startIdx = lines.findIndex(l => l.toLowerCase().includes('=== lista daa spessa'));
-    if (startIdx === -1) { state.fixedLoaded = true; return; }
+    if (startIdx === -1) { s.fixedLoaded = true; return; }
     const fixed = [];
     for (let i = startIdx + 1; i < lines.length; i++) {
       const raw = lines[i];
@@ -71,111 +76,97 @@ async function ensureFixedList() {
       if (!l) continue;
       if (l.toLowerCase().startsWith('whitelist:')) break;
       if (l.startsWith('===')) break;
-      fixed.push(l.toUpperCase()); // ingredienti in maiuscolo
+      fixed.push(l.toUpperCase());
     }
-    // Rimuovi voci fixed precedenti e ricrea tutte sul lato sinistro, con ID stabili
-    state.items = state.items.filter(i => !i.fixed);
-    fixed.forEach(name => state.items.push(createItem(name, LEFT, true)));
-    // Ripristina stato da storage offline (check/column + voci custom)
-    restoreOfflineChecklist('checklist');
+    s.items = (s.items || []).filter(i => !i.fixed);
+    fixed.forEach(name => s.items.push({ id: stableIdForFixed(name), text: name, checked: false, column: LEFT, fixed: true }));
+    restoreOfflineChecklist('checklist', s);
   } catch (e) {
     logError('fixed_list_load_failed', e);
   } finally {
-    state.fixedLoaded = true;
-    if (!state.fixedAnnounced) {
+    s.fixedLoaded = true;
+    if (!s.fixedAnnounced) {
       window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id: 'fixed_list', title: 'LISTA DAA SPESSA', type: 'checklist' } }));
-      state.fixedAnnounced = true;
+      s.fixedAnnounced = true;
     }
   }
 }
 
-function renderColumn(container, column, table) {
+function renderColumn(container, column, table, s) {
   container.innerHTML = '';
-
   const isCustom = table !== 'checklist';
   const title = document.createElement('h2');
-  const label = column === LEFT ? (state.leftLabel || 'Da comprare') : (state.rightLabel || 'Comprato / in Frigo');
+  const label = column === LEFT ? (s.leftLabel || 'Da comprare') : (s.rightLabel || 'Comprato / in Frigo');
   title.textContent = label;
-  // Colore titolo per distinguere: fisso (rosso/viola), custom (giallo/azzurro)
   title.style.color = isCustom
     ? (column === LEFT ? 'var(--giallo)' : 'var(--azzurro-colonna)')
     : (column === LEFT ? 'var(--rosso-colonna)' : 'var(--viola-colonna)');
   container.appendChild(title);
-
   const moveBtn = document.createElement('button');
   moveBtn.className = 'button';
   moveBtn.textContent = "Sposta nell'altra colonna";
   moveBtn.addEventListener('click', () => {
-    const selected = state.items.filter(i => i.column === column && i.checked);
+    const selected = (s.items || []).filter(i => i.column === column && i.checked);
     if (selected.length === 0) {
       logEvent('checklist', 'move_selected_skipped', { from: column, reason: 'none_selected' });
-      updateAll(table);
+      updateAll(table, s);
       return;
     }
     selected.forEach(i => { i.column = column === LEFT ? RIGHT : LEFT; i.checked = false; });
     logEvent('checklist', 'move_selected', { count: selected.length, from: column });
     upsert(table, selected);
-    updateAll(table);
+    updateAll(table, s);
   });
   container.appendChild(moveBtn);
-
   const list = document.createElement('div');
   container.appendChild(list);
-
-  // Mostra prima voci fisse (senza X), poi le altre
-  const items = state.items.filter(i => i.column === column).sort((a,b) => (a.fixed === b.fixed ? 0 : a.fixed ? -1 : 1));
-  items.forEach(i => list.appendChild(renderItem(i, table)));
+  const items = (s.items || []).filter(i => i.column === column).sort((a,b) => (a.fixed === b.fixed ? 0 : a.fixed ? -1 : 1));
+  items.forEach(i => list.appendChild(renderItem(i, table, s)));
 }
 
-function renderItem(item, table) {
+function renderItem(item, table, s) {
   const row = document.createElement('div');
   row.className = 'item' + (item.checked ? ' checked' : '');
-
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
-  checkbox.checked = !!item.checked; // spunta = selezione temporanea (barratura) per spostare
+  checkbox.checked = !!item.checked;
   checkbox.title = 'Seleziona per spostare';
   checkbox.addEventListener('change', () => {
     item.checked = checkbox.checked;
     logEvent('checklist', item.checked ? 'check' : 'uncheck', { id: item.id });
     upsert(table, item);
-    updateAll(table);
+    updateAll(table, s);
   });
-
   const span = document.createElement('span');
   span.className = 'text';
   span.textContent = item.text;
-
   const removeBtn = (!item.fixed) ? (() => {
     const b = document.createElement('button');
     b.className = 'remove';
     b.textContent = 'X';
     b.addEventListener('click', () => {
-      const idx = state.items.findIndex(x => x.id === item.id);
-      if (idx >= 0) state.items.splice(idx, 1);
+      const idx = (s.items || []).findIndex(x => x.id === item.id);
+      if (idx >= 0) s.items.splice(idx, 1);
       logEvent('checklist', 'delete', { id: item.id });
       remove(table, { id: item.id });
-      updateAll(table);
+      updateAll(table, s);
     });
     return b;
   })() : null;
-
   if (removeBtn) row.append(checkbox, span, removeBtn); else row.append(checkbox, span);
   return row;
 }
 
-function updateAll(table) {
-  // Normalizza eventuali item senza colonna assegnata (evita sparizioni)
-  state.items.forEach(i => { if (i.column !== LEFT && i.column !== RIGHT) i.column = LEFT; });
+function updateAll(table, s) {
+  (s.items || []).forEach(i => { if (i.column !== LEFT && i.column !== RIGHT) i.column = LEFT; });
   const leftCol = document.getElementById('col-left');
   const rightCol = document.getElementById('col-right');
   if (leftCol && rightCol) {
-    renderColumn(leftCol, LEFT, table);
-    renderColumn(rightCol, RIGHT, table);
-    // Telemetria di rendering per diagnostica rapida
+    renderColumn(leftCol, LEFT, table, s);
+    renderColumn(rightCol, RIGHT, table, s);
     try {
-      const leftCount = state.items.filter(i => i.column === LEFT).length;
-      const rightCount = state.items.filter(i => i.column === RIGHT).length;
+      const leftCount = (s.items || []).filter(i => i.column === LEFT).length;
+      const rightCount = (s.items || []).filter(i => i.column === RIGHT).length;
       logEvent('checklist', 'render', { leftCount, rightCount });
     } catch {}
   }
@@ -183,10 +174,10 @@ function updateAll(table) {
 
 export function initChecklistUI(container, opts = {}) {
   const docId = opts.id || 'fixed_list';
-  state = getState(docId);
+  const s = getState(docId);
   const isFixed = docId === 'fixed_list';
   const table = isFixed ? 'checklist' : `checklist_${docId}`;
-  if (opts.title) state.title = opts.title;
+  if (opts.title) s.title = opts.title;
 
   // helper per meta colonne
   function loadMeta() {
@@ -215,7 +206,7 @@ export function initChecklistUI(container, opts = {}) {
 
   const titleEl = document.createElement('input');
   titleEl.type = 'text';
-  titleEl.value = state.title || (isFixed ? 'LISTA DAA SPESSA' : 'Checklist');
+  titleEl.value = s.title || (isFixed ? 'LISTA DAA SPESSA' : 'Checklist');
   titleEl.placeholder = 'Titolo checklist';
   titleEl.disabled = isFixed; // non rinominabile
   titleEl.style.minWidth = '220px';
@@ -225,13 +216,10 @@ export function initChecklistUI(container, opts = {}) {
   saveBtn.className = 'button';
   saveBtn.textContent = 'Salva';
   saveBtn.addEventListener('click', async () => {
-    // salva tutti gli item correnti
-    await upsert(table, state.items);
-    // salva meta documento (titolo, etichette colonne)
+    await upsert(table, s.items);
     saveMeta();
-    // salva meta per titolo documento
-    window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id: docId, title: titleEl.value || state.title || 'Checklist', type: 'checklist' } }));
-    logEvent('checklist', 'save', { id: docId, count: state.items.length });
+    window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id: docId, title: titleEl.value || s.title || 'Checklist', type: 'checklist' } }));
+    logEvent('checklist', 'save', { id: docId, count: (s.items || []).length });
   });
   actions.appendChild(saveBtn);
 
@@ -345,52 +333,38 @@ export function initChecklistUI(container, opts = {}) {
   const left = document.createElement('div'); left.className = 'column left'; left.id = 'col-left';
   const right = document.createElement('div'); right.className = 'column right'; right.id = 'col-right';
   grid.append(left, right);
-
   container.append(actions, input, grid);
 
-  // Carica da remoto (se disponibile) e sottoscrivi agli aggiornamenti
   (async () => {
     const applyRows = (rows) => {
       try {
         if (!Array.isArray(rows) || rows.length === 0) return;
-        const byId = new Map(state.items.map(i => [i.id, i]));
+        const byId = new Map((s.items || []).map(i => [i.id, i]));
         rows.forEach(r => {
           if (r && r.id) {
             const isFxCand = (r.fixed === true) || (r.id && /^fixed_/i.test(r.id));
-            // Protezione simmetrica: nella lista fissa ignora voci non-fisse
             if (isFixed && !isFxCand) return;
-            // Protezione: in checklist personalizzate ignora eventuali item fissi della lista principale
             if (!isFixed && /^fixed_/i.test(String(r.id))) return;
             const prev = byId.get(r.id) || {};
             const isFx = (r.fixed === true) || (prev.fixed === true) || (r.id && /^fixed_/i.test(r.id));
             const col = (r.column === RIGHT ? RIGHT : (r.column === LEFT ? LEFT : (r.column === 'right' ? RIGHT : (prev.column === RIGHT ? RIGHT : LEFT))));
             let text = (r.text !== undefined) ? r.text : prev.text;
-            if (isFx && (!text || !String(text).trim())) text = prev.text; // preserva testo ingredienti fissi
-            const item = {
-              id: r.id,
-              text,
-              checked: (r.checked !== undefined ? !!r.checked : !!prev.checked),
-              column: col,
-              fixed: isFx && isFixed // se non è la lista fissa, forzare non-fisso
-            };
+            if (isFx && (!text || !String(text).trim())) text = prev.text;
+            const item = { id: r.id, text, checked: (r.checked !== undefined ? !!r.checked : !!prev.checked), column: col, fixed: isFx && isFixed };
             byId.set(item.id, item);
           }
         });
-        state.items = Array.from(byId.values());
-        updateAll(table);
+        s.items = Array.from(byId.values());
+        updateAll(table, s);
       } catch {}
     };
-
     try {
-      // Carica prima la lista fissa per avere testi corretti come base di merge
-      if (isFixed) { await ensureFixedList(); }
+      if (isFixed) { await ensureFixedListFor(s); }
       const rows = await listSync(table);
       applyRows(rows);
     } catch {}
-
     let sb = null;
     try { sb = await getSupabase(); } catch {}
-
     try {
       const unsub = await subscribeSync(table, (payload) => {
         try {
@@ -399,44 +373,42 @@ export function initChecklistUI(container, opts = {}) {
           if (newRow && newRow.id) {
             applyRows([newRow]);
           } else if ((evt === 'DELETE' || !newRow) && oldRow && oldRow.id) {
-            const byId = new Map(state.items.map(i => [i.id, i]));
+            const byId = new Map((s.items || []).map(i => [i.id, i]));
             byId.delete(oldRow.id);
-            state.items = Array.from(byId.values());
-            updateAll(table);
+            s.items = Array.from(byId.values());
+            updateAll(table, s);
           }
         } catch {}
       });
-      // opzionalmente memorizza unsub se servisse cancellare in futuro
       container.__unsubChecklist = unsub;
+      activeCleanups.push(() => { try { unsub && unsub(); } catch {} });
     } catch {}
-
-    // Aggiorna indicatore e fallback a polling se necessario
     rtIndicator.textContent = sb ? 'Sync: realtime + polling' : 'Sync: polling';
-    container.__pollChecklist = setInterval(async () => {
+    const pid = setInterval(async () => {
       try {
         const rows = await listSync(table);
         applyRows(rows);
       } catch {}
     }, 5000);
-    })();
+    container.__pollChecklist = pid;
+    activeCleanups.push(() => { try { clearInterval(pid); } catch {} });
+  })();
   input.querySelector('#add-item').addEventListener('click', () => {
-    if (isFixed) return; // blocca inserimento nella lista fissa
+    if (isFixed) return;
     const text = input.querySelector('#new-item-text').value.trim();
     if (!text) return;
     const item = createItem(text, LEFT, false);
-    state.items.push(item);
+    (s.items || (s.items = [])).push(item);
     logEvent('checklist', 'create', { text });
     upsert(table, item);
     input.querySelector('#new-item-text').value = '';
-    updateAll(table);
+    updateAll(table, s);
   });
-
   if (isFixed) {
-    ensureFixedList().then(() => updateAll(table));
+    ensureFixedListFor(s).then(() => updateAll(table, s));
   } else {
-    // custom checklist: non caricare lista fissa; ripristina eventuale salvataggio
-    restoreOfflineChecklist(table);
-    updateAll(table);
+    restoreOfflineChecklist(table, s);
+    updateAll(table, s);
   }
 }
 

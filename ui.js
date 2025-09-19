@@ -1,7 +1,7 @@
 // ui.js
 // Inizializza la UI, monta header, main (login o tools) e footer.
 import { initAuthUI, isAuthenticated, logout } from './auth.js?v=rox13';
-import { initChecklistUI } from './checklist.js?v=rox13';
+import { initChecklistUI, cleanupChecklistEffects } from './checklist.js?v=rox13';
 import * as Notes from './notes.js?v=rox13';
 import { initLoggerPanel, logEvent } from './logger.js?v=rox13';
 import { initBackgrounds } from './backgrounds.js?v=rox13';
@@ -304,6 +304,8 @@ function loginPage() {
 }
 
 export function render() {
+  // Cleanup effetti attivi della checklist (unsubscribe, interval) prima di rimontare la UI
+  try { cleanupChecklistEffects && cleanupChecklistEffects(); } catch {}
   const root = document.getElementById('app-root');
   root.innerHTML = '';
   if (isAuthenticated()) document.body.classList.remove('login-bg'); else document.body.classList.add('login-bg');
