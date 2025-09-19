@@ -185,15 +185,15 @@ export function initChecklistUI(container, opts = {}) {
     try {
       const meta = JSON.parse(localStorage.getItem('roxstar_meta_' + table) || '{}');
       if (meta && typeof meta === 'object') {
-        if (meta.leftLabel) state.leftLabel = String(meta.leftLabel);
-        if (meta.rightLabel) state.rightLabel = String(meta.rightLabel);
+        if (meta.leftLabel) s.leftLabel = String(meta.leftLabel);
+        if (meta.rightLabel) s.rightLabel = String(meta.rightLabel);
       }
     } catch {}
   }
   function saveMeta() {
     if (isFixed) return;
     try {
-      const meta = { leftLabel: state.leftLabel, rightLabel: state.rightLabel };
+      const meta = { leftLabel: s.leftLabel, rightLabel: s.rightLabel };
       localStorage.setItem('roxstar_meta_' + table, JSON.stringify(meta));
     } catch {}
   }
@@ -230,7 +230,7 @@ export function initChecklistUI(container, opts = {}) {
   renameBtn.addEventListener('click', () => {
     if (isFixed) return;
     // Abilita editing inline del titolo
-    const prev = titleEl.value || state.title || 'Checklist';
+    const prev = titleEl.value || s.title || 'Checklist';
     titleEl.disabled = false;
     titleEl.focus();
     titleEl.select();
@@ -240,7 +240,7 @@ export function initChecklistUI(container, opts = {}) {
       titleEl.removeEventListener('keydown', onKey);
       titleEl.disabled = false; // rimane editabile
       if (!newTitle || newTitle === prev) return;
-      state.title = newTitle;
+      s.title = newTitle;
       titleEl.value = newTitle;
       window.dispatchEvent(new CustomEvent('doc_renamed', { detail: { id: docId, title: newTitle, type: 'checklist' } }));
       logEvent('checklist', 'rename', { id: docId, title: newTitle });
@@ -296,11 +296,11 @@ export function initChecklistUI(container, opts = {}) {
     rightInput.style.minWidth = '180px';
 
     const applyLabels = () => {
-      state.leftLabel = (leftInput.value || 'Da comprare').trim();
-      state.rightLabel = (rightInput.value || 'Comprato / in Frigo').trim();
+      s.leftLabel = (leftInput.value || 'Da comprare').trim();
+      s.rightLabel = (rightInput.value || 'Comprato / in Frigo').trim();
       saveMeta();
-      updateAll(table);
-      logEvent('checklist', 'columns_renamed', { id: docId, left: state.leftLabel, right: state.rightLabel });
+      updateAll(table, s);
+      logEvent('checklist', 'columns_renamed', { id: docId, left: s.leftLabel, right: s.rightLabel });
     };
     leftInput.addEventListener('change', applyLabels);
     rightInput.addEventListener('change', applyLabels);
@@ -338,8 +338,19 @@ export function initChecklistUI(container, opts = {}) {
   (async () => {
     const applyRows = (rows) => {
       try {
-        if (!Array.isArray(rows) || rows.length === 0) return;
         const byId = new Map((s.items || []).map(i => [i.id, i]));
+        if (!Array.isArray(rows) || rows.length === 0) {
+          // nessuna riga: mantieni solo i fissi nella fixed, svuota nella custom
+          if (isFixed) {
+            const fixedIds = new Set((s.items || []).filter(i => i.fixed).map(i => i.id));
+            s.items = (s.items || []).filter(i => fixedIds.has(i.id));
+          } else {
+            s.items = [];
+          }
+          updateAll(table, s);
+          return;
+        }
+        const incomingIds = new Set();
         rows.forEach(r => {
           if (r && r.id) {
             const isFxCand = (r.fixed === true) || (r.id && /^fixed_/i.test(r.id));
@@ -352,9 +363,16 @@ export function initChecklistUI(container, opts = {}) {
             if (isFx && (!text || !String(text).trim())) text = prev.text;
             const item = { id: r.id, text, checked: (r.checked !== undefined ? !!r.checked : !!prev.checked), column: col, fixed: isFx && isFixed };
             byId.set(item.id, item);
+            incomingIds.add(item.id);
           }
         });
-        s.items = Array.from(byId.values());
+        // allowed: custom = solo incoming; fixed = incoming + fissi già presenti
+        let allowedIds = incomingIds;
+        if (isFixed) {
+          const fixedExisting = new Set((s.items || []).filter(i => i.fixed).map(i => i.id));
+          allowedIds = new Set([...incomingIds, ...fixedExisting]);
+        }
+        s.items = Array.from(byId.values()).filter(i => allowedIds.has(i.id));
         updateAll(table, s);
       } catch {}
     };
