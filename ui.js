@@ -117,15 +117,20 @@ window.addEventListener('doc_saved', (e) => {
   if (isChecklist || isNewDoc) {
     if (id && title) upsertMeta('documents', { id, title, type: type || (id === 'fixed_list' ? 'checklist' : 'note') });
   }
+  // Se è un documento nuovo diverso da fixed_list, selezionalo automaticamente
+  if (isNewDoc && id && id !== 'fixed_list') {
+    currentDoc = { id, type: type || 'note' };
+  }
   refreshDocsList();
+  render();
 });
 window.addEventListener('doc_removed', (e) => {
   const { id } = e.detail || {};
   if (id && id !== 'fixed_list') DOCS.delete(id);
   // rimuovi meta dal catalogo
   if (id) removeMeta('documents', { id });
-  // se sto visualizzando il documento rimosso, torna alla lista fissa
-  if (id && id === currentDoc.id) { currentDoc = { type: 'checklist', id: 'fixed_list' }; }
+  // se sto visualizzando il documento rimosso, torna al placeholder (nessun documento selezionato)
+  if (id && id === currentDoc.id) { currentDoc = { type: null, id: null }; }
   refreshDocsList();
   render();
 });
