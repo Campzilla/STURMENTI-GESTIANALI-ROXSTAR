@@ -183,3 +183,10 @@ body > header, body > main, body > footer, #app-root {
   position: relative;
   z-index: 1;
 }
+
+/* Responsive: header strumenti con pulsanti sotto il titolo su mobile */
+@media (max-width: 768px) {
+  .tools-header { align-items: stretch !important; }
+  .tools-header .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  main { padding: 12px; }
+}

@@ -3,6 +3,12 @@
 /* Layout checklist */
 .checklists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
+/* Responsiveness: su mobile una singola colonna e padding laterale ridotto */
+@media (max-width: 768px) {
+  .checklists { grid-template-columns: 1fr; }
+  .column { padding: 12px; }
+}
+
 /* Colonne checklist */
 .column { border-radius: 14px; padding: 14px; }
 .column.left  { background: rgba(229,57,53,0.48);  border: 2px solid rgba(229,57,53,0.70); }

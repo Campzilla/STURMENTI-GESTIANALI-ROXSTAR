@@ -203,7 +203,8 @@ function toolsPage() {
   const container = el('div', { class: '' });
   const toolbar = el('div', { id: 'toolbar', class: 'toolbar', style: 'display:flex; gap:8px; align-items:center;' });
 
-  const layout = el('div', { style: 'display:grid; grid-template-columns: 280px 1fr; gap:16px; align-items:start;' });
+  const isMobile = (typeof window !== 'undefined' && window.innerWidth <= 768);
+  const layout = el('div', { style: `display:grid; grid-template-columns: ${isMobile ? '1fr' : '280px 1fr'}; gap:16px; align-items:start;` });
 
   const docArea = el('section', { class: '' });
   if (currentDoc && currentDoc.type === 'checklist') {
@@ -222,8 +223,8 @@ function toolsPage() {
   }
 
   layout.append(documentsPanel(), docArea);
-  // Ensure two-column layout: documents panel on the left, content on the right
-  try { layout.style.gridTemplateColumns = '280px 1fr'; } catch {}
+  // Ensure responsive layout: a colonna singola su mobile
+  try { layout.style.gridTemplateColumns = (typeof window !== 'undefined' && window.innerWidth <= 768) ? '1fr' : '280px 1fr'; } catch {}
   container.append(toolbar, layout);
   return container;
 }
@@ -431,9 +432,9 @@ function header() {
     const h = el('header', { class: 'marquee' }, track);
     return h;
   }
-  // Tools: titolo richiesto + pulsanti a destra
-  const left = el('h1', { class: 'tools-title' }, 'STURMENTI E RIZOZZE GESTIANALI ROXSTAR');
-  const right = el('div', {});
+  // Tools: titolo richiesto con pulsanti sotto al titolo
+  const titleEl = el('h1', { class: 'tools-title' }, 'STURMENTI E RIZOZZE GESTIANALI ROXSTAR');
+  const controls = el('div', { class: 'controls' });
   if (authenticated) {
     const resetBtn = el('button', { class: 'button muted', style: 'margin-right:8px;', onclick: async () => {
       try { await resetLocalData(['documents']); } catch {}
@@ -441,9 +442,9 @@ function header() {
       try { await (async function(){ const rows = await listMeta('documents'); const fetched = Array.isArray(rows) ? rows : []; const newIds = new Set(fetched.filter(r => r && r.id && r.title).map(r => r.id)); for (const id of Array.from(DOCS.keys())) { if (id !== 'fixed_list' && !newIds.has(id)) DOCS.delete(id); } fetched.forEach(r => { if (r && r.id && r.title) DOCS.set(r.id, { title: r.title, type: r.type || 'note' }); }); refreshDocsList(); })(); } catch {}
     } }, 'Reset cache locale');
     const btn = el('button', { class: 'button', onclick: () => { try { logout(); } catch {}; render(); } }, 'Logout');
-    right.append(resetBtn, btn);
+    controls.append(resetBtn, btn);
   }
-  const h = el('header', { class: 'app-header tools-header', style: 'display:flex; justify-content:space-between; align-items:center; padding:8px 0;' }, left, right);
+  const h = el('header', { class: 'app-header tools-header', style: 'padding:8px 0; display:flex; flex-direction:column; align-items:flex-start; gap:8px;' }, titleEl, controls);
   return h;
 }
 
