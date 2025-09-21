@@ -275,23 +275,7 @@ export function render() {
     }
   } catch {}
 
-  // Gestione robusta degli sfondi durante il cambio login/strumenti
-  const isLogin = document.body.classList.contains('login-bg');
-  import('./backgrounds.js?v=rox19').then(mod => {
-    // Prima disattivo tutti gli sfondi
-    mod.toggleBackground('vantaDiskLogin', false);
-    mod.toggleBackground('vantaFogTools', false);
-    mod.toggleBackground('lightRaysLogin', false);
-    
-    // Poi attivo solo quello giusto con un piccolo delay per evitare race conditions
-    setTimeout(() => {
-      if (isLogin) {
-        mod.toggleBackground('vantaDiskLogin', true);
-      } else {
-        mod.toggleBackground('vantaFogTools', true);
-      }
-    }, 50);
-  });
+  // Gestione sfondi: affidati solo all'inizializzazione adattiva centralizzata
   root.appendChild(header());
   const main = el('main');
   root.appendChild(main);
@@ -324,15 +308,6 @@ export function render() {
   if (isAuthenticated()) {
     main.appendChild(toolsPage());
     setTimeout(refreshDocsList, 0);
-    // Disabilitato: self-test automatico non visibile in UI
-    // setTimeout(() => {
-    //   try {
-    //     if (!localStorage.getItem('roxstar_selftest_done')) {
-    //       if (typeof runSyncSelfTest === 'function') runSyncSelfTest();
-    //       localStorage.setItem('roxstar_selftest_done', '1');
-    //     }
-    //   } catch {}
-    // }, 400);
   } else {
     main.appendChild(loginPage());
   }
