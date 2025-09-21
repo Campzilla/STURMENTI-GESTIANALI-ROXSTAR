@@ -25,6 +25,9 @@ function currentUsername() {
 
 // Gestione documenti creati (Note/Checklist); primo sempre la lista fissa
 const DOCS = new Map([[ 'fixed_list', { title: 'LISTA DAA SPESSA', type: 'checklist' } ]]);
+let currentDoc = { id: null, type: null };
+// Assicurati che currentDoc sia inizializzato prima di qualsiasi chiamata a toolsPage/render
+// rimosso: let currentDoc = { id: null, type: null };
 
 // Bootstrap da storage della tabella "documents" (offline o online)
 (function bootstrapDocsFromStorage(){
@@ -296,17 +299,16 @@ export function render() {
 
   if (isAuthenticated()) {
     main.appendChild(toolsPage());
-    // dopo aver montato la pagina strumenti aggiorno il pannello documenti
     setTimeout(refreshDocsList, 0);
-    // auto self-test solo una volta per sessione
-    setTimeout(() => {
-      try {
-        if (!localStorage.getItem('roxstar_selftest_done')) {
-          if (typeof runSyncSelfTest === 'function') runSyncSelfTest();
-          localStorage.setItem('roxstar_selftest_done', '1');
-        }
-      } catch {}
-    }, 400);
+    // Disabilitato: self-test automatico non visibile in UI
+    // setTimeout(() => {
+    //   try {
+    //     if (!localStorage.getItem('roxstar_selftest_done')) {
+    //       if (typeof runSyncSelfTest === 'function') runSyncSelfTest();
+    //       localStorage.setItem('roxstar_selftest_done', '1');
+    //     }
+    //   } catch {}
+    // }, 400);
   } else {
     main.appendChild(loginPage());
   }
@@ -379,9 +381,6 @@ async function runSyncSelfTest() {
   }
 }
 
-// Stato documento corrente selezionato
-let currentDoc = { id: null, type: null };
-
 // Helper DOM minimale
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -402,26 +401,33 @@ function el(tag, attrs = {}, ...children) {
 }
 
 function header() {
-  const left = el('div', {}, 'Roxstar Tools');
+  const authenticated = typeof isAuthenticated === 'function' && isAuthenticated();
+  if (!authenticated) {
+    // Login: header con marquee scorrevole
+    const track = el('div', { class: 'track' }, 'ROXSTAR RIZOZZE GESTIANALI');
+    const h = el('header', { class: 'marquee' }, track);
+    return h;
+  }
+  // Tools: titolo richiesto + pulsanti a destra
+  const left = el('h1', { class: 'tools-title' }, 'STURMENTI E RIZOZZE GESTIANALI ROXSTAR');
   const right = el('div', {});
-  if (typeof isAuthenticated === 'function' && isAuthenticated()) {
+  if (authenticated) {
     const resetBtn = el('button', { class: 'button muted', style: 'margin-right:8px;', onclick: async () => {
       try { await resetLocalData(['documents']); } catch {}
-      // svuota mappa e re-hydrate
       try { for (const id of Array.from(DOCS.keys())) { if (id !== 'fixed_list') DOCS.delete(id); } } catch {}
       try { await (async function(){ const rows = await listMeta('documents'); const fetched = Array.isArray(rows) ? rows : []; const newIds = new Set(fetched.filter(r => r && r.id && r.title).map(r => r.id)); for (const id of Array.from(DOCS.keys())) { if (id !== 'fixed_list' && !newIds.has(id)) DOCS.delete(id); } fetched.forEach(r => { if (r && r.id && r.title) DOCS.set(r.id, { title: r.title, type: r.type || 'note' }); }); refreshDocsList(); })(); } catch {}
     } }, 'Reset cache locale');
     const btn = el('button', { class: 'button', onclick: () => { try { logout(); } catch {}; render(); } }, 'Logout');
     right.append(resetBtn, btn);
   }
-  const h = el('header', { class: 'app-header', style: 'display:flex; justify-content:space-between; align-items:center; padding:8px 0;' }, left, right);
+  const h = el('header', { class: 'app-header tools-header', style: 'display:flex; justify-content:space-between; align-items:center; padding:8px 0;' }, left, right);
   return h;
 }
 
 function footer() {
-  const small = el('small', {}, 'rox19');
-  const selftest = el('span', { id: 'sync-selftest', style: 'margin-left:8px; color:#999;' }, '');
-  return el('footer', { class: 'app-footer', style: 'padding:16px 0; color:#777;' }, small, selftest);
+  // Footer glow richiesto dalla guida
+  const text = el('div', { class: 'text' }, 'COOKED BY FRED CAMPZILLA');
+  return el('footer', { class: 'glow' }, text);
 }
 
 function documentsPanel() {
