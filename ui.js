@@ -75,8 +75,13 @@ function refreshDocsList() {
     const t = (meta?.title || '').toLowerCase();
     return !(String(id).startsWith('test_') || t.includes('self test doc'));
   });
+  // Evita duplicati della Lista Daa Spessa per titolo
+  const filtered = visibleEntries.filter(([id, meta]) => {
+    const t = (meta?.title || '').toLowerCase().trim();
+    return !(t === 'lista daa spessa' && id !== 'fixed_list');
+  });
   // ordina con la lista fissa in cima
-  const sorted = visibleEntries.sort((a, b) => {
+  const sorted = filtered.sort((a, b) => {
     if (a[0] === 'fixed_list') return -1;
     if (b[0] === 'fixed_list') return 1;
     const ta = a[1]?.type || '';
@@ -99,6 +104,12 @@ window.addEventListener('doc_saved', (e) => {
   const { id, title, type } = e.detail || {};
   const existed = id ? DOCS.has(id) : false; // valuta PRIMA di aggiornare DOCS
   try { logEvent('docs', 'doc_saved_event', { id, type, existed, origin: e?.detail?.origin || 'unknown' }); } catch {}
+  // Evita inserimenti duplicati della Lista Daa Spessa per titolo
+  if (title && title.toLowerCase().trim() === 'lista daa spessa' && id !== 'fixed_list') {
+    refreshDocsList();
+    render();
+    return;
+  }
   if (id && title) DOCS.set(id, { title, type: type || (id === 'fixed_list' ? 'checklist' : 'note') });
   // Aggiorna meta documento su backend SOLO quando necessario per non sovrascrivere il testo delle note
   // - Checklist: sempre (serve solo il catalogo)
@@ -152,6 +163,11 @@ subscribeMeta('documents', (payload) => {
       let type = newRow.type || 'note';
       if (!newRow.type && newRow.body) {
         try { type = JSON.parse(newRow.body || '{}')?.type || 'note'; } catch {}
+      }
+      // Evita duplicati della Lista Daa Spessa per titolo
+      if ((title || '').toLowerCase().trim() === 'lista daa spessa' && newRow.id !== 'fixed_list') {
+        refreshDocsList();
+        return;
       }
       DOCS.set(newRow.id, { title, type });
       refreshDocsList();
@@ -224,6 +240,8 @@ export function render() {
   const root = document.getElementById('app-root');
   root.innerHTML = '';
   if (isAuthenticated()) document.body.classList.remove('login-bg'); else document.body.classList.add('login-bg');
+  // Se autenticato e nessun documento selezionato, apri automaticamente la Lista Daa Spessa
+  try { if (isAuthenticated() && (!currentDoc || !currentDoc.id)) { currentDoc = { id: 'fixed_list', type: 'checklist' }; } } catch {}
   
   // Pulisci la mappa DOCS quando entri negli strumenti per evitare voci fantasma da sessioni precedenti
   try {
@@ -246,6 +264,11 @@ export function render() {
           if (id !== 'fixed_list' && !newIds.has(id)) DOCS.delete(id);
         }
         fetched.forEach(r => { if (r && r.id && r.title) DOCS.set(r.id, { title: r.title, type: r.type || 'note' }); });
+        // Pruning: elimina qualsiasi documento che cloni la Lista Daa Spessa per titolo
+        for (const [id, meta] of Array.from(DOCS.entries())) {
+          const t = (meta?.title || '').toLowerCase().trim();
+          if (t === 'lista daa spessa' && id !== 'fixed_list') DOCS.delete(id);
+        }
         refreshDocsList();
       })();
     }
