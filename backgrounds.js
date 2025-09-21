@@ -37,17 +37,6 @@ function shouldPreferLightLogin() {
       } catch { return false; }
     })();
     if (!glSupported) return true;
-
-    // Heuristic: desktop/laptop con poche risorse o DPI alto su risoluzione ampia
-    const ua = navigator.userAgent || '';
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
-    const mem = Number(navigator.deviceMemory || 8);
-    const cores = Number(navigator.hardwareConcurrency || 4);
-    const dpr = window.devicePixelRatio || 1;
-    const wide = window.innerWidth || screen.width || 0;
-
-    // Preferisci light se: non mobile e (pochi core/mem oppure combinazione dpr alto + schermo ampio)
-    if (!isMobile && (mem <= 4 || cores <= 4 || (dpr >= 2 && wide >= 1400))) return true;
   } catch {}
   return false;
 }
@@ -79,16 +68,16 @@ function applyState(names, isLogin){
 
   // Abilita solo ciò che serve
   if (isLogin) {
-    // Selezione adattiva: usa una variante leggera quando opportuno, anche se il manifest non la elenca
-    const useLight = shouldPreferLightLogin();
+    // Selezione adattiva: usa una variante leggera SOLO per accessibilità o override esplicito
+    const preferLight = shouldPreferLightLogin();
+    const allowLight = preferLight && (names.includes('lightRaysLogin') || (localStorage.getItem('rox_bg_login')||'').toLowerCase()==='light');
     // Spegni entrambe per sicurezza prima di accendere quella scelta
     toggleBackground('vantaDiskLogin', false);
     toggleBackground('lightRaysLogin', false);
-    if (useLight) {
+    if (allowLight) {
       toggleBackground('lightRaysLogin', true);
       try { logEvent('backgrounds', 'login_bg_selected', { mode: 'light' }); } catch {}
     } else {
-      // Abilita vanta solo se presente nel manifest oppure in fallback
       if (names.includes('vantaDiskLogin') || true) {
         toggleBackground('vantaDiskLogin', true);
         try { logEvent('backgrounds', 'login_bg_selected', { mode: 'vanta' }); } catch {}
@@ -97,7 +86,6 @@ function applyState(names, isLogin){
   } else {
     // Tools: rispetta il manifest, di default usa vantaFogTools
     if (names.includes('vantaFogTools')) toggleBackground('vantaFogTools', true);
-    // Spegni eventuali attivi non previsti
     ['vantaDiskLogin','lightRaysLogin'].forEach(sn => toggleBackground(sn, false));
   }
 
