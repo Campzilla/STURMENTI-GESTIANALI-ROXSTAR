@@ -33,7 +33,7 @@ export function initNotesUI(container) {
     const row = { id, title: titleVal, body: body.value || '' };
     try {
       await upsert('notes', row);
-      window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id, title: titleVal, type: 'note' } }));
+      window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id, title: titleVal, type: 'note', origin: 'notes.save' } }));
       logEvent('notes', 'save', { id });
     } catch (e) {
       logError('notes_save_failed', e);
@@ -49,7 +49,7 @@ export function initNotesUI(container) {
     if (!id) return;
     const newTitle = (title.value || '').trim();
     if (!newTitle) return;
-    window.dispatchEvent(new CustomEvent('doc_renamed', { detail: { id, title: newTitle, type: 'note' } }));
+    window.dispatchEvent(new CustomEvent('doc_renamed', { detail: { id, title: newTitle, type: 'note', origin: 'notes.rename' } }));
     logEvent('notes', 'rename', { id });
   });
 
@@ -61,7 +61,7 @@ export function initNotesUI(container) {
     if (!id) return;
     try {
       await remove('notes', { id });
-      window.dispatchEvent(new CustomEvent('doc_removed', { detail: { id } }));
+      window.dispatchEvent(new CustomEvent('doc_removed', { detail: { id, origin: 'notes.remove' } }));
       logEvent('notes', 'remove', { id });
       Notes.currentNoteId = null;
       title.value = '';

@@ -50,7 +50,17 @@ function restoreOfflineChecklist(table, s) {
       if (r && r.id) {
         if (r.fixed) {
           const it = byId.get(r.id);
-          if (it) { it.checked = !!r.checked; it.column = r.column === RIGHT ? RIGHT : LEFT; }
+          if (it) {
+            it.checked = !!r.checked; it.column = r.column === RIGHT ? RIGHT : LEFT;
+          } else if (table === 'checklist') {
+            // Per la lista fissa, reintroduci anche item fixed salvati che non erano pre-caricati
+            const text = (r.text || '').trim();
+            if (text) {
+              const item = { id: r.id, text, checked: !!r.checked, column: (r.column === RIGHT ? RIGHT : LEFT), fixed: true };
+              (s.items || (s.items = [])).push(item);
+              byId.set(item.id, item);
+            }
+          }
         } else {
           if (table === 'checklist') return;
           if (!byId.has(r.id)) { s.items.push({ ...r, fixed: false }); byId.set(r.id, r); }
@@ -86,7 +96,7 @@ async function ensureFixedListFor(s) {
   } finally {
     s.fixedLoaded = true;
     if (!s.fixedAnnounced) {
-      window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id: 'fixed_list', title: 'LISTA DAA SPESSA', type: 'checklist' } }));
+      window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id: 'fixed_list', title: 'LISTA DAA SPESSA', type: 'checklist', origin: 'checklist.ensureFixedList' } }));
       s.fixedAnnounced = true;
     }
   }
@@ -218,7 +228,7 @@ export function initChecklistUI(container, opts = {}) {
   saveBtn.addEventListener('click', async () => {
     await upsert(table, s.items);
     saveMeta();
-    window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id: docId, title: titleEl.value || s.title || 'Checklist', type: 'checklist' } }));
+    window.dispatchEvent(new CustomEvent('doc_saved', { detail: { id: docId, title: titleEl.value || s.title || 'Checklist', type: 'checklist', origin: 'checklist.save' } }));
     logEvent('checklist', 'save', { id: docId, count: (s.items || []).length });
   });
   actions.appendChild(saveBtn);
@@ -242,7 +252,7 @@ export function initChecklistUI(container, opts = {}) {
       if (!newTitle || newTitle === prev) return;
       s.title = newTitle;
       titleEl.value = newTitle;
-      window.dispatchEvent(new CustomEvent('doc_renamed', { detail: { id: docId, title: newTitle, type: 'checklist' } }));
+      window.dispatchEvent(new CustomEvent('doc_renamed', { detail: { id: docId, title: newTitle, type: 'checklist', origin: 'checklist.rename' } }));
       logEvent('checklist', 'rename', { id: docId, title: newTitle });
     };
     const onKey = (e) => { if (e.key === 'Enter') { e.preventDefault(); finalize(); } };
@@ -264,7 +274,7 @@ export function initChecklistUI(container, opts = {}) {
       try { localStorage.removeItem('roxstar_meta_' + table); } catch {}
     } catch {}
     states.delete(docId);
-    window.dispatchEvent(new CustomEvent('doc_removed', { detail: { id: docId } }));
+    window.dispatchEvent(new CustomEvent('doc_removed', { detail: { id: docId, origin: 'checklist.remove' } }));
     logEvent('checklist', 'remove', { id: docId });
   });
   actions.appendChild(deleteBtn);
@@ -321,8 +331,9 @@ export function initChecklistUI(container, opts = {}) {
   const addBtn = input.querySelector('#add-item');
   const addText = input.querySelector('#new-item-text');
   if (isFixed) {
-    if (addBtn) { addBtn.disabled = true; addBtn.title = 'La lista fissa non è modificabile'; }
-    if (addText) { addText.disabled = true; addText.placeholder = 'Lista fissa non modificabile'; }
+    // Abilito l'aggiunta per la Lista Daa Spessa: gli elementi diventano non cancellabili (fixed)
+    if (addBtn) { addBtn.disabled = false; addBtn.title = 'Aggiungi un ingrediente (non si potrà cancellare)'; }
+    if (addText) { addText.disabled = false; addText.placeholder = 'Aggiungi ingrediente (non si può cancellare)'; }
   }
 
   const grid = document.createElement('div');
@@ -389,6 +400,8 @@ export function initChecklistUI(container, opts = {}) {
           if (newRow && newRow.id) {
             applyRows([newRow]);
           } else if ((evt === 'DELETE' || !newRow) && oldRow && oldRow.id) {
+            // Nella lista fissa ignoro le cancellazioni in realtime per preservare gli ingredienti aggiunti
+            if (isFixed) return;
             const byId = new Map((s.items || []).map(i => [i.id, i]));
             byId.delete(oldRow.id);
             s.items = Array.from(byId.values());
@@ -410,12 +423,30 @@ export function initChecklistUI(container, opts = {}) {
     activeCleanups.push(() => { try { clearInterval(pid); } catch {} });
   })();
   input.querySelector('#add-item').addEventListener('click', () => {
-    if (isFixed) return;
-    const text = input.querySelector('#new-item-text').value.trim();
-    if (!text) return;
-    const item = createItem(text, LEFT, false);
+    const textRaw = input.querySelector('#new-item-text').value.trim();
+    if (!textRaw) return;
+    if (isFixed) {
+      // Aggiungi come elemento fixed non cancellabile con id stabile
+      const text = textRaw.toUpperCase();
+      const id = stableIdForFixed(text);
+      if ((s.items || []).some(i => i.id === id)) {
+        // già presente: svuota input e aggiorna
+        input.querySelector('#new-item-text').value = '';
+        updateAll(table, s);
+        return;
+      }
+      const item = { id, text, checked: false, column: LEFT, fixed: true };
+      (s.items || (s.items = [])).push(item);
+      logEvent('checklist', 'create_fixed', { text });
+      upsert(table, item);
+      input.querySelector('#new-item-text').value = '';
+      updateAll(table, s);
+      return;
+    }
+    // Checklist custom: comportamento esistente
+    const item = createItem(textRaw, LEFT, false);
     (s.items || (s.items = [])).push(item);
-    logEvent('checklist', 'create', { text });
+    logEvent('checklist', 'create', { text: textRaw });
     upsert(table, item);
     input.querySelector('#new-item-text').value = '';
     updateAll(table, s);

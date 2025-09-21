@@ -1,11 +1,22 @@
 // sync.js
 /**
- * Integrazione Supabase Realtime e caricamento config.
- * Fornisce helper CRUD e subscription; qui si carica config.json se presente, altrimenti config.example.json come fallback.
+ * Integrazione storage offline + Supabase Realtime.
+ * Espone API: list, upsert, remove, subscribe con compat layer su tabella 'notes'.
  */
 import { logError, logEvent } from './logger.js';
 
 let cachedConfig = null;
+
+// Utente corrente (username) per scoping client-side dei dati
+function getCurrentUser() {
+  try {
+    const raw = localStorage.getItem('roxstar_auth_user') || sessionStorage.getItem('roxstar_auth_user');
+    const u = JSON.parse(raw || '{}');
+    return (u && u.username) ? String(u.username) : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function getConfig() {
   if (cachedConfig) return cachedConfig;
@@ -22,9 +33,8 @@ export async function getConfig() {
   return {};
 }
 
-// Lazy import del client Supabase solo quando necessario
+// ===== Supabase client (lazy) =====
 let supabaseClient = null;
-let supabaseDisabled = false; // circuit breaker: mantenuto ma non viene più attivato nei fallback
 function isPlaceholder(v) {
   return typeof v === 'string' && /^\s*\$\{[A-Za-z0-9_]+\}\s*$/.test(v);
 }
@@ -44,15 +54,11 @@ function hasValidSupabaseConfig(cfg) {
   return true;
 }
 export async function getSupabase() {
-  // Niente short-circuit: proviamo a creare il client ad ogni chiamata finché non riusciamo
   if (supabaseClient) return supabaseClient;
   const cfg = await getConfig();
-  // Abilita Supabase di default, salvo esplicito realtime.enabled === false
   const realtimeEnabled = cfg?.realtime?.enabled !== false;
-  if (!realtimeEnabled || !hasValidSupabaseConfig(cfg)) {
-    return null; // modalità offline se non configurato o esplicitamente disattivato
-  }
-  // Import robusto con più CDN compatibili con mobile
+  if (!realtimeEnabled || !hasValidSupabaseConfig(cfg)) return null; // offline mode
+  // Import robusto con più CDN
   let createClient;
   try {
     ({ createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'));
@@ -71,7 +77,7 @@ export async function getSupabase() {
 
 // ===== Persistenza OFFLINE (LocalStorage) =====
 const LS_PREFIX = 'roxstar_table_';
-function lsKey(table){ return `${LS_PREFIX}${table}`; }
+function lsKey(table){ const me = getCurrentUser(); return me ? `${LS_PREFIX}${me}_${table}` : `${LS_PREFIX}${table}`; }
 function readOffline(table){
   try { return JSON.parse(localStorage.getItem(lsKey(table)) || '[]'); } catch { return []; }
 }
@@ -81,7 +87,7 @@ function writeOffline(table, rows){
 
 // Tombstones per gestire cancellazioni offline/idempotenti
 const TS_PREFIX = 'roxstar_tombstones_';
-function tsKey(table){ return `${TS_PREFIX}${table}`; }
+function tsKey(table){ const me = getCurrentUser(); return me ? `${TS_PREFIX}${me}_${table}` : `${TS_PREFIX}${table}`; }
 function readTombstones(table){
   try { return (JSON.parse(localStorage.getItem(tsKey(table)) || '[]') || []).filter(x => x && x.id); } catch { return []; }
 }
@@ -138,8 +144,9 @@ function docMetaRemoteId(docId){ return `${DOCMETA_PREFIX}${docId}`; }
 function isChecklistTable(t){ return /^checklist(_.+)?$/.test(t); }
 function docIdFromTable(t){ return t === 'checklist' ? 'fixed_list' : t.replace(/^checklist_/, ''); }
 function toRemoteRows(table, arr){
+  const owner = getCurrentUser();
   if (table === 'documents') {
-    return arr.map(r => ({ id: docMetaRemoteId(r.id), title: `${DOC_MARK}${r.title || ''}`, body: JSON.stringify({ type: r?.type || 'note', docId: r.id }) }));
+    return arr.map(r => ({ id: docMetaRemoteId(r.id), title: `${DOC_MARK}${r.title || ''}`, body: JSON.stringify({ type: r?.type || 'note', docId: r.id, owner }) }));
   }
   if (isChecklistTable(table)) {
     const dId = docIdFromTable(table);
@@ -148,14 +155,21 @@ function toRemoteRows(table, arr){
       const checked = !!(r || {}).checked;
       const column = (r || {}).column || 'left';
       const fixed = !!(r || {}).fixed;
-      return { id: r.id, title: `${CHK_MARK}${dId}|${text}`, body: JSON.stringify({ checked, column, fixed }) };
+      return { id: r.id, title: `${CHK_MARK}${dId}|${text}`, body: JSON.stringify({ checked, column, fixed, owner }) };
     });
   }
   return arr;
 }
 function fromRemoteRows(table, rows){
+  const me = getCurrentUser();
   if (table === 'documents') {
-    return rows.map(r => {
+    const filtered = rows.filter(r => {
+      let o = null;
+      try { o = (JSON.parse(r.body || '{}') || {}).owner || null; } catch {}
+      if (!me) return true; // fallback se non autenticato
+      return o === me;      // mostra solo i miei documenti
+    });
+    return filtered.map(r => {
       let type = 'note';
       let docId = null;
       try { const parsed = JSON.parse(r.body || '{}') || {}; type = parsed?.type || 'note'; docId = parsed?.docId || null; } catch {}
@@ -168,6 +182,7 @@ function fromRemoteRows(table, rows){
     const dId = docIdFromTable(table);
     return rows
       .filter(r => (r.title || '').startsWith(`${CHK_MARK}${dId}|`))
+      .filter(r => { let o = null; try { o = (JSON.parse(r.body || '{}') || {}).owner || null; } catch {}; if (!me) return true; return o === me; })
       .map(r => {
         const raw = r.title || '';
         const sep = raw.indexOf('|');
@@ -180,207 +195,197 @@ function fromRemoteRows(table, rows){
   return rows;
 }
 
-// Helpers di base per tabella generica
-export async function upsert(table, values) {
-  try {
-    const sb = await getSupabase();
-    const arr = Array.isArray(values) ? values : [values];
-    // Annulla eventuali tombstones per gli id che si stanno re-inserendo
-    try { arr.forEach(r => { if (r && r.id) clearTombstone(table, r.id); }); } catch {}
-    const isChecklist = isChecklistTable(table);
-    const isDocuments = table === 'documents';
-    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
-    const toRemote = (isChecklist || isDocuments) ? toRemoteRows(table, arr) : arr;
-    if (!sb) {
-      const data = upsertOffline(table, values);
-      logEvent('sync', 'upsert_offline', { table, count: Array.isArray(values) ? values.length : 1 });
-      return { data, error: null };
-    }
-    const { data, error } = await sb.from(remoteTable).upsert(toRemote).select();
-    if (error) throw error;
-    // Cleanup legacy meta rows (pre-fix) che usavano id uguale alla nota
-    if (isDocuments) {
-      try {
-        for (const r of arr) {
-          if (r && r.id) {
-            await sb.from('notes').delete().eq('id', r.id).like('title', `${DOC_MARK}%`);
-          }
-        }
-      } catch {}
-    }
-    const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data || []) : (data || []);
-    return { data: mapped, error: null };
-  } catch (e) {
-    // Degrada in offline senza disattivare definitivamente Supabase
-    const data = upsertOffline(table, values);
-    logEvent('sync', 'upsert_offline_fallback', { table, reason: e?.message });
-    return { data, error: null };
+// ===== API =====
+export async function list(table) {
+  const sb = await getSupabase();
+  try { logEvent('sync', 'list', { table, online: !!sb }); } catch {}
+  if (!sb) {
+    // offline
+    const rows = readOffline(table);
+    return Array.isArray(rows) ? rows : [];
   }
-}
-
-export async function remove(table, match) {
+  const isChecklist = isChecklistTable(table);
+  const isDocuments = table === 'documents';
+  const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
   try {
-    const sb = await getSupabase();
-    const isChecklist = isChecklistTable(table);
-    const isDocuments = table === 'documents';
-    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
-    if (!sb) {
-      const data = removeOffline(table, match);
-      if (match?.id) addTombstone(table, match.id);
-      logEvent('sync', 'delete_offline', { table, match });
-      return { data, error: null };
-    }
-    let query = sb.from(remoteTable).delete();
-    if (match?.id) {
-      if (isDocuments) {
-        // delete meta nuova
-        query = query.eq('id', docMetaRemoteId(match.id));
-      } else {
-        query = query.eq('id', match.id);
-      }
-    } else if (isChecklist && match?.all === true) {
-      const dId = docIdFromTable(table);
-      const prefix = `${CHK_MARK}${dId}|`;
-      query = query.like('title', `${prefix}%`);
-    } else if (isDocuments && match?.all === true) {
-      // protezione: non consentire delete-all del catalogo documenti
-      throw new Error('Refuse to delete-all on documents');
-    }
-    const { data, error } = await query.select();
-    if (error) throw error;
-    // cleanup meta legacy (pre-fix)
-    if (isDocuments && match?.id) {
-      try { await sb.from('notes').delete().eq('id', match.id).like('title', `${DOC_MARK}%`); } catch {}
-    }
-    if (match?.id) addTombstone(table, match.id);
-    // se match.all su checklist, svuota anche l’offline
-    if (isChecklist && match?.all === true) { try { writeOffline(table, []); } catch {} }
-    const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data || []) : (data || []);
-    return { data: mapped, error: null };
-  } catch (e) {
-    const data = removeOffline(table, match);
-    if (match?.id) addTombstone(table, match.id);
-    logEvent('sync', 'delete_offline_fallback', { table, reason: e?.message, match });
-    return { data, error: null };
-  }
-}
-
-export async function list(table, match = null) {
-  try {
-    const sb = await getSupabase();
-    const isChecklist = isChecklistTable(table);
-    const isDocuments = table === 'documents';
-    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
-    const dId = isChecklist ? docIdFromTable(table) : null;
-    if (!sb) {
-      const rows = readOffline(table);
-      const filtered = rows.filter(r => !isTombstoned(table, r?.id));
-      if (!match) return filtered;
-      // filtro semplice lato client
-      return filtered.filter(r => Object.entries(match).every(([k, v]) => r[k] === v));
-    }
     let query = sb.from(remoteTable).select('*');
     if (isDocuments) {
       query = query.like('title', `${DOC_MARK}%`);
     } else if (isChecklist) {
+      const dId = docIdFromTable(table);
       query = query.like('title', `${CHK_MARK}${dId}|%`);
-    } else if (table === 'notes') {
-      // Escludi righe "tecniche" usate per compat layer
-      query = query
-        .not('title', 'like', `${DOC_MARK}%`)
-        .not('title', 'like', `${CHK_MARK}%`);
-    }
-    if (match && Object.keys(match).length && !isChecklist && !isDocuments) {
-      query = query.match(match);
     }
     const { data, error } = await query;
     if (error) throw error;
-    const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data || []) : (data || []);
-    return mapped.filter(r => !isTombstoned(table, r?.id));
+    const arr = Array.isArray(data) ? data : [];
+    if (isDocuments || isChecklist) {
+      return fromRemoteRows(table, arr);
+    }
+    return arr;
   } catch (e) {
-    logEvent('sync', 'list_offline_fallback', { table, reason: e?.message });
-    return readOffline(table).filter(r => !isTombstoned(table, r?.id));
+    logError('list_failed', e, { table });
+    const rows = readOffline(table);
+    return Array.isArray(rows) ? rows : [];
   }
 }
 
-export async function getById(table, id) {
+export async function upsert(table, values) {
+  const arr = Array.isArray(values) ? values : [values];
+  const sb = await getSupabase();
+  try { logEvent('sync', 'upsert', { table, count: arr.length, online: !!sb }); } catch {}
+  // Prima aggiorno offline per responsività
+  const updatedLocal = upsertOffline(table, arr);
+  // Pulisci eventuale tombstone
+  arr.forEach(r => clearTombstone(table, r?.id));
+
+  if (!sb) return updatedLocal;
+  const isChecklist = isChecklistTable(table);
+  const isDocuments = table === 'documents';
+  const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
+  const rows = (isChecklist || isDocuments) ? toRemoteRows(table, arr) : arr;
   try {
-    const sb = await getSupabase();
-    const isChecklist = isChecklistTable(table);
-    const isDocuments = table === 'documents';
-    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
-    const dId = isChecklist ? docIdFromTable(table) : null;
-    if (!sb) {
-      const rows = readOffline(table);
-      return rows.find(r => r.id === id) || null;
-    }
-    let query = sb.from(remoteTable).select('*');
-    if (isDocuments) {
-      query = query.eq('id', docMetaRemoteId(id));
-    } else if (isChecklist) {
-      query = query.like('title', `${CHK_MARK}${dId}|%`).eq('id', id);
-    } else {
-      // plain notes: escludi righe tecniche eventualmente rimaste
-      query = query.eq('id', id)
-        .not('title', 'like', `${DOC_MARK}%`)
-        .not('title', 'like', `${CHK_MARK}%`);
-    }
-    const { data, error } = await (query.maybeSingle?.() ?? query.single());
+    const { error } = await sb.from(remoteTable).upsert(rows);
     if (error) throw error;
-    const mapped = (isChecklist || isDocuments) ? fromRemoteRows(table, data ? [data] : []) : (data ? [data] : []);
-    return mapped[0] || null;
   } catch (e) {
-    logEvent('sync', 'getById_offline_fallback', { table, reason: e?.message, id });
-    const rows = readOffline(table);
-    return rows.find(r => r.id === id) || null;
+    logError('upsert_failed', e, { table, count: arr.length });
+  }
+  return updatedLocal;
+}
+
+export async function remove(table, match) {
+  const sb = await getSupabase();
+  const id = match?.id;
+  try { logEvent('sync', 'remove', { table, id, online: !!sb }); } catch {}
+  // Gestione tombstone per evitare re-introduzioni
+  if (id) addTombstone(table, id);
+  // Aggiorna offline subito
+  const afterLocal = removeOffline(table, match);
+
+  if (!sb) return afterLocal;
+  const isChecklist = isChecklistTable(table);
+  const isDocuments = table === 'documents';
+  const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
+  if (id) {
+    const remoteId = isDocuments ? docMetaRemoteId(id) : id;
+    try {
+      const { error } = await sb.from(remoteTable).delete().eq('id', remoteId);
+      if (error) throw error;
+    } catch (e) {
+      logError('remove_failed', e, { table, id });
+    }
+  } else if (match && match.all === true) {
+    try {
+      const { error } = await sb.from(remoteTable).delete().neq('id', '__never__');
+      if (error) throw error;
+    } catch (e) {
+      logError('remove_all_failed', e, { table });
+    }
+  }
+  return afterLocal;
+}
+
+// Recupera una singola riga per id (rispetta il compat layer e funziona anche offline)
+export async function getById(table, id) {
+  if (!id) return null;
+  const sb = await getSupabase();
+  const isChecklist = isChecklistTable(table);
+  const isDocuments = table === 'documents';
+  const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
+  if (!sb) {
+    // offline
+    const rows = readOffline(table) || [];
+    const found = rows.find(r => r && r.id === id) || null;
+    return found || null;
+  }
+  try {
+    const remoteId = isDocuments ? docMetaRemoteId(id) : id;
+    const { data, error } = await sb.from(remoteTable).select('*').eq('id', remoteId).limit(1);
+    if (error) throw error;
+    const arr = Array.isArray(data) ? data : [];
+    if (!arr.length) return null;
+    if (isDocuments || isChecklist) {
+      const mapped = fromRemoteRows(table, arr);
+      return mapped && mapped[0] ? mapped[0] : null;
+    }
+    return arr[0] || null;
+  } catch (e) {
+    logError('getById_failed', e, { table, id });
+    const rows = readOffline(table) || [];
+    return rows.find(r => r && r.id === id) || null;
   }
 }
 
 export async function subscribe(table, callback) {
+  const sb = await getSupabase();
+  const isChecklist = isChecklistTable(table);
+  const isDocuments = table === 'documents';
+  const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
+
+  if (!sb) {
+    // Offline: nessun realtime, ritorno un unsubscribe no-op
+    try { logEvent('sync', 'subscribe_offline', { table }); } catch {}
+    return async () => {};
+  }
+
+  // const me = getCurrentUser(); // Non catturare qui: calcolare dinamicamente per ogni evento
+  const dId = isChecklist ? docIdFromTable(table) : null;
+  const channel = sb.channel(`public:${remoteTable}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: remoteTable }, (payload) => {
+      try {
+        const newRow = payload?.new || null;
+        const oldRow = payload?.old || null;
+        const title = (newRow?.title || oldRow?.title || '') || '';
+        if (isDocuments) {
+          if (!title.startsWith(DOC_MARK)) return;
+        }
+        if (isChecklist) {
+          if (!title.startsWith(`${CHK_MARK}${dId}|`)) return;
+        }
+        // Filtra per owner (dinamico per evento)
+        const me = getCurrentUser();
+        const ownerNew = (() => { try { return (JSON.parse(newRow?.body || '{}') || {}).owner || null; } catch { return null; } })();
+        const ownerOld = (() => { try { return (JSON.parse(oldRow?.body || '{}') || {}).owner || null; } catch { return null; } })();
+        const owner = ownerNew != null ? ownerNew : ownerOld;
+        if (me && owner && owner !== me) return;
+        // Filtra eventi checklist tombstoned
+        if (isChecklist) {
+          const itemId = newRow?.id || oldRow?.id;
+          if (isTombstoned(table, itemId)) return;
+        }
+        callback(payload);
+      } catch {}
+    })
+    .subscribe();
+
+  return async () => { try { await sb.removeChannel(channel); } catch {} };
+}
+
+// Pulisce completamente le tabelle offline e i tombstones per un sottoinsieme di tabelle logiche (per l’utente corrente)
+export async function clearAllForUser(tables = ['documents']) {
   try {
-    const sb = await getSupabase();
-    if (!sb) return () => {};
-    const isChecklist = isChecklistTable(table);
-    const isDocuments = table === 'documents';
-    const remoteTable = (isChecklist || isDocuments) ? 'notes' : table;
-    const dId = isChecklist ? docIdFromTable(table) : null;
-    const channelName = `table:${remoteTable}`;
-    const ch = sb.channel(channelName);
-    const params = { event: '*', schema: 'public', table: remoteTable };
-    ch.on('postgres_changes', params, payload => {
-      const t = payload?.new?.title || payload?.old?.title || '';
-      const evt = payload?.eventType || payload?.event;
-      // NOTA: per 'notes' filtriamo i "tecnici" e inoltriamo raw
-      if (table === 'notes') {
-        if (t.startsWith(DOC_MARK) || t.startsWith(CHK_MARK)) return;
-        return callback(payload);
+    const me = getCurrentUser();
+    const lsKeys = [];
+    const tsKeys = [];
+    for (const t of tables) {
+      const lkey = me ? `roxstar_table_${me}_${t}` : `roxstar_table_${t}`;
+      const tkey = me ? `roxstar_tombstones_${me}_${t}` : `roxstar_tombstones_${t}`;
+      lsKeys.push(lkey);
+      tsKeys.push(tkey);
+      // per le checklist legate ai documenti, elimina anche roxstar_table_${me}_checklist_* e relativi tombstones
+      if (t === 'documents') {
+        const allKeys = Object.keys(localStorage);
+        for (const k of allKeys) {
+          if (me && k.startsWith(`roxstar_table_${me}_checklist_`)) localStorage.removeItem(k);
+          else if (!me && k.startsWith('roxstar_table_checklist_')) localStorage.removeItem(k);
+          if (me && k.startsWith(`roxstar_tombstones_${me}_checklist_`)) localStorage.removeItem(k);
+          else if (!me && k.startsWith('roxstar_tombstones_checklist_')) localStorage.removeItem(k);
+        }
       }
-      // documents: mappo su id locale e shape locale
-      if (isDocuments) {
-        if (!t.startsWith(DOC_MARK)) return; // solo documents
-        const mappedNew = payload?.new ? fromRemoteRows('documents', [payload.new])[0] : null;
-        const mappedOld = payload?.old ? fromRemoteRows('documents', [payload.old])[0] : null;
-        const localId = (mappedNew && mappedNew.id) || (mappedOld && mappedOld.id) || null;
-        if (localId && isTombstoned(table, localId) && evt !== 'DELETE') return; // filtra reintroduzioni
-        return callback({ ...payload, new: mappedNew, old: mappedOld });
-      }
-      // checklist: filtra per prefisso e mappa le righe
-      if (isChecklist) {
-        const prefix = `${CHK_MARK}${dId}|`;
-        if (!t.startsWith(prefix)) return; // solo checklist del documento target
-        const mappedNew = payload?.new ? fromRemoteRows(table, [payload.new])[0] : null;
-        const mappedOld = payload?.old ? fromRemoteRows(table, [payload.old])[0] : null;
-        const localId = (mappedNew && mappedNew.id) || (mappedOld && mappedOld.id) || null;
-        if (localId && isTombstoned(table, localId) && evt !== 'DELETE') return; // filtra reintroduzioni
-        return callback({ ...payload, new: mappedNew, old: mappedOld });
-      }
-      // di default, inoltra
-      return callback(payload);
-    });
-    ch.subscribe();
-    return () => sb.removeChannel(ch);
+    }
+    for (const k of lsKeys) localStorage.removeItem(k);
+    for (const k of tsKeys) localStorage.removeItem(k);
+    try { logEvent('sync', 'clear_all_for_user', { me, tables }); } catch {}
   } catch (e) {
-    logEvent('sync', 'subscribe_offline_fallback', { table, reason: e?.message });
-    return () => {};
+    logError('clear_all_for_user_failed', e);
   }
 }
